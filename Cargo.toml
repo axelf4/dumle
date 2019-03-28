@@ -1,0 +1,15 @@
+[package]
+name = "dumle"
+version = "0.1.0"
+authors = ["Axel Forsman <axelsfor@gmail.com>"]
+edition = "2018"
+license = "MIT"
+
+[dependencies]
+lis = { git = "https://github.com/axelf4/lis" }
+wasm-bindgen = "0.2.39"
+dumle-macro = { path = "macro" }
+
+[dependencies.web-sys]
+version = "0.3.16"
+features = ["Document", "Element", "HtmlElement", "HtmlCollection", "Node", "Window", "EventTarget"]
