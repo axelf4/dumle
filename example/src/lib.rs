@@ -1,5 +1,4 @@
-use dumle::{element, Context, TraversalMode};
-use dumle_macro::render;
+use dumle::{element, Context, div, Vnode};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -14,9 +13,8 @@ macro_rules! console_log {
     ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
 }
 
-#[render]
-fn render(ctx: Context, switch: bool) {
-    element(ctx);
+fn render(ctx: Context, switch: bool) -> impl Vnode  {
+    div
 }
 
 #[wasm_bindgen]
@@ -29,7 +27,6 @@ pub fn run() {
 
     let ctx = Context {
         cursor: body.into(),
-        mode: TraversalMode::Creating,
     };
 
     render(ctx, true);
