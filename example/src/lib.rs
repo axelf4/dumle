@@ -1,4 +1,4 @@
-use dumle::{element, Context, div, Vnode};
+use dumle::{patch, tags::*, Context, Vnode};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -13,8 +13,8 @@ macro_rules! console_log {
     ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
 }
 
-fn render(ctx: Context, switch: bool) -> impl Vnode  {
-    div
+fn render(switch: bool) -> impl Vnode {
+    ((div, button), button)
 }
 
 #[wasm_bindgen]
@@ -25,9 +25,13 @@ pub fn run() {
     let body = document.body().unwrap();
     console_log!("{:?}", body);
 
-    let ctx = Context {
-        cursor: body.into(),
-    };
+    let mut ctx = Context::from(body.into());
 
-    render(ctx, true);
+    let tree = render(true);
+
+    patch(&mut ctx, None, Some(&tree));
+
+    let new = render(true);
+
+    patch(&mut ctx, Some(tree), Some(&new));
 }
