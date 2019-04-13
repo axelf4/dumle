@@ -1,4 +1,8 @@
-use dumle::{tags::*, Attribute, ChildCons, Context, Text, Vnode};
+// #![feature(trace_macros)]
+
+// trace_macros!(true);
+
+use dumle::{html, tags::*, Context, Vnode};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -14,17 +18,14 @@ macro_rules! console_log {
 }
 
 fn render(switch: bool) -> impl Vnode {
-    (
-        (
-            ChildCons(div, Text("hej")),
-            Attribute {
-                name: "style",
-                value: if switch { "color: red" } else { "color: blue" },
-                node: ChildCons(button, Text("imma button")),
-            },
-        ),
-        ChildCons(button, Text("press me you fuck")),
-    )
+    html! {
+    <div>{"hej"}
+    <button style=if switch { "color: red" } else { "color: blue" },>
+    {"imma button"}
+    </button>
+    </div>
+    <button>{"press me"}</button>
+    }
 }
 
 #[wasm_bindgen]

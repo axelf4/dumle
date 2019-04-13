@@ -56,10 +56,10 @@ pub trait Vnode {
 }
 
 /// Marker trait for virtual nodes that correspond to a single DOM node.
-trait SingleNode: Vnode {}
+pub trait SingleNode: Vnode {}
 
 /// Marker trait for virtual nodes that correspond to a single DOM element.
-trait SingleElement: SingleNode {}
+pub trait SingleElement: SingleNode {}
 
 // TODO Add trait for constant nodes
 // And skip updating all children if all children are constant
@@ -103,6 +103,7 @@ impl<E: Element> Vnode for E {
                 // Updating is no-op
             }
             (Some(_), None) => {
+                // TODO Parent should take care of recursively removing children
                 match ctx.cursor {
                     Cursor::Parent(ref parent) => parent
                         .remove_child(&parent.last_child().expect("This element is not found")),
@@ -128,6 +129,7 @@ pub mod tags {
     macro_rules! impl_tags {
         ($($name:ident),+) => {
             $(
+                #[derive(Debug)]
                 pub struct $name;
                 impl Element for $name {
                     const NAME: &'static str = stringify!($name);
@@ -139,6 +141,7 @@ pub mod tags {
     impl_tags! {div, button}
 }
 
+#[derive(Debug)]
 pub struct Text<T>(pub T);
 
 // TODO Add ZST for constant text using const generics
@@ -191,15 +194,22 @@ impl<T: AsRef<str>> Vnode for Text<T> {
 
 impl<T: AsRef<str>> SingleNode for Text<T> {}
 
-pub struct ChildCons<P, C>(pub P, pub C);
+impl From<&'static str> for Text<&'static str> {
+    fn from(data: &'static str) -> Self {
+        Text(data)
+    }
+}
 
-impl<P: SingleNode, C: Vnode> Vnode for ChildCons<P, C> {
+#[derive(Debug)]
+pub struct Child<P, C>(pub P, pub C);
+
+impl<P: SingleNode, C: Vnode> Vnode for Child<P, C> {
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
         let (pa, pb) = p
-            .map(|ChildCons(a, b)| (Some(a), Some(b)))
+            .map(|Child(a, b)| (Some(a), Some(b)))
             .unwrap_or((None, None));
         let (na, nb) = n
-            .map(|ChildCons(a, b)| (Some(a), Some(b)))
+            .map(|Child(a, b)| (Some(a), Some(b)))
             .unwrap_or((None, None));
         P::patch(ctx, pa, na);
         // Specify current cursor as parent instead
@@ -213,11 +223,15 @@ impl<P: SingleNode, C: Vnode> Vnode for ChildCons<P, C> {
     }
 }
 
-impl<P: SingleNode, C: SingleNode> SingleNode for ChildCons<P, C> {}
+impl<P: SingleNode, C: SingleNode> SingleNode for Child<P, C> {}
+impl<P: SingleElement, C: SingleNode> SingleElement for Child<P, C> {}
 
+// TODO Parameter for type of value
+/// An attribute on a DOM node.
+#[derive(Debug)]
 pub struct Attribute<N> {
+    // Const-generics help here. Could use trait until const-generics arrive, but meh
     /// The name of the DOM attribute.
-    /// Const-generics help here.
     pub name: &'static str,
     /// The current value of this attribute.
     pub value: &'static str,
@@ -260,13 +274,45 @@ impl<N: SingleElement> Vnode for Attribute<N> {
     }
 }
 
-// TODO store DOM nodes
+impl<N: SingleElement> SingleNode for Attribute<N> {}
+impl<N: SingleElement> SingleElement for Attribute<N> {}
 
-/// A value with an associated key.
-pub struct Keyed<K, T> {
-    key: K,
-    value: T,
+/*pub struct Listener<N, F> {
+    pub event: &'static str,
+    pub callback: F,
+    pub node: N,
 }
+
+impl<N: SingleElement, F: FnMut() -> ()> Vnode for Listener<N, F> {
+    fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
+        let (pa, pb) = p
+            .map(|Attribute { name, value, node }| (Some((name, value)), Some(node)))
+            .unwrap_or((None, None));
+        let (na, nb) = n
+            .map(|Attribute { name, value, node }| (Some((name, value)), Some(node)))
+            .unwrap_or((None, None));
+        N::patch(ctx, pb, nb);
+
+        // Cannot set attribute for removed element
+        if nb.is_none() {
+            return;
+        }
+
+        let element: &web_sys::Element = match &ctx.cursor {
+            Cursor::Child(node) => node,
+            Cursor::Parent(_) => unreachable!(),
+        }
+        .dyn_ref()
+        .expect("Failed to get element from cursor");
+        match (pa, na) {
+            (Some((name, _)), None) => element.remove_attribute(name).unwrap(),
+            (None, Some((name, value))) => element.set_attribute(name, value).unwrap(),
+            (Some((name, old)), Some((_, new))) => { /* Can never change */ }
+            _ => unreachable!(),
+        }
+    }
+}
+*/
 
 // Allow constructing cons lists
 impl<A: Vnode, B: Vnode> Vnode for (A, B) {
@@ -279,6 +325,66 @@ impl<A: Vnode, B: Vnode> Vnode for (A, B) {
     }
 }
 
+#[doc(hidden)]
+#[macro_export]
+macro_rules! local_stringify {
+    ($s:ident) => {
+        stringify!($s)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export(local_inner_macros)]
+macro_rules! html_impl {
+    // Start of opening tag
+    ($($sibling:ident)? ($($stack:tt)*) < $tag:ident $($tt:tt)+) => {
+        let node = $crate::tags::$tag;
+        html_impl!{@tag (node:$($sibling)?, $($stack)*) $($tt)+}
+    };
+    // End of opening tag
+    (@tag ($($stack:tt)*) > $($tt:tt)+) => {html_impl!{($($stack)*) $($tt)+}};
+    // Self-closing tag
+    (@tag ($node:ident:$($sibling:ident)?, $($stack:tt)*) /> $($tt:tt)+) => {
+        $(let $node = ($sibling, $node);)? // If had siblings
+        html_impl!{$node ($($stack)*) $($tt)*}
+    };
+    // Attribute
+    (@tag ($node:ident $($stack:tt)*) $attr:ident = $val:expr, $($tt:tt)+) => {
+        let $node = $crate::Attribute {
+            name: local_stringify!($attr),
+            value: $val,
+            node: $node,
+        };
+        html_impl!{@tag ($node $($stack)*) $($tt)*}
+    };
+    // Expression block
+    ($($sibling:ident)? ($($stack:tt)*) { $eval:expr } $($tt:tt)*) => {
+        let node: $crate::Text<&'static str> = $eval.into(); // TODO
+        $(let node = ($sibling, node);)? // If had siblings
+        html_impl!{node ($($stack)*) $($tt)*}
+    };
+    // End tag
+    ($($child:ident)? ($node:ident:$($sibling:ident)?, $($stack:tt)*) </ $tag:ident > $($tt:tt)*) => {
+        $(let $node = $crate::Child($node, $child);)? // If had child
+        $(let $node = ($sibling, $node);)? // If had siblings
+        html_impl!{$node ($($stack)*) $($tt)*}
+    };
+    ($sibling:ident ()) => {$sibling};
+}
+
+/// A convenience macro for building trees with a HTML-esque language.
+#[macro_export]
+macro_rules! html {
+    ($($tt:tt)+) => {{$crate::html_impl!{() $($tt)+}}};
+}
+
+/// A value with an associated key.
+pub struct Keyed<K, T> {
+    key: K,
+    value: T,
+}
+
+// TODO store DOM nodes
 /// Keyed lists
 pub struct Dyn<K, T>(Vec<Keyed<K, T>>);
 
@@ -303,9 +409,8 @@ pub struct Dyn<K, T>(Vec<Keyed<K, T>>);
 
 use std::cell::RefCell;
 
-pub struct Hook<T, R: Fn(&T, Fn(T)) -> Vnode> {
+pub struct Hook<T, R: Fn(&T, Fn(T)) -> SingleNode> {
     state: RefCell<T>,
-    // render: Fn(&T, Fn(T)) -> Vnode,
     render: R,
     node: Node,
 }
