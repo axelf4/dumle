@@ -2,7 +2,7 @@
 
 // trace_macros!(true);
 
-use dumle::{html, tags::*, Context, Vnode};
+use dumle::{html, tags::*, Child, Context, Listener, Text, Vnode};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -17,6 +17,12 @@ macro_rules! console_log {
     ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
 }
 
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(module = "/index.js")]
+    fn exit_with_live_runtime();
+}
+
 fn render(switch: bool) -> impl Vnode {
     html! {
     <div>{"hej"}
@@ -24,11 +30,15 @@ fn render(switch: bool) -> impl Vnode {
     {"imma button"}
     </button>
     </div>
-    <button>{"press me"}</button>
+    <button click=move || console_log!("pressed!"),>{"press me"}</button>
     }
+    /*Child(
+        Listener::unattached(button, "click", move || console_log!("hfes")),
+        Text("press me"),
+    )*/
 }
 
-#[wasm_bindgen]
+#[wasm_bindgen(start)]
 pub fn run() {
     console_error_panic_hook::set_once();
 
@@ -46,4 +56,6 @@ pub fn run() {
     Context::from(body.clone().into()).patch(Some(tree), Some(&new));
 
     console_log!("After second render!");
+
+    exit_with_live_runtime();
 }

@@ -1,9 +1,7 @@
-// Note that a dynamic `import` statement here is required due to
-// webpack/webpack#6615, but in theory `import { greet } from './pkg/hello_world';`
-// will work here one day as well!
-const rust = import('./pkg/example');
+export function exit_with_live_runtime() {
+	throw "SimulateInfiniteLoop";
+}
 
-rust
-	.then(m => m.run())
-	.catch(console.error);
-
+import('./pkg/example').catch(e => {
+	if (e !== "SimulateInfiniteLoop") console.error(e);
+});

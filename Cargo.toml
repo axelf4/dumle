@@ -7,8 +7,8 @@ license = "MIT"
 
 [dependencies]
 lis = { path = "../lis" }
-wasm-bindgen = "0.2.39"
+wasm-bindgen = "0.2.42"
 
 [dependencies.web-sys]
-version = "0.3.16"
+version = "0.3.19"
 features = ["Document", "Element", "HtmlElement", "HtmlCollection", "Node", "Text", "Window", "EventTarget"]

@@ -1,4 +1,5 @@
 use lis::{diff_by_key, DiffCallback};
+use std::cell::Cell;
 use std::hash::Hash;
 use std::mem;
 use wasm_bindgen::JsCast;
@@ -200,6 +201,17 @@ impl From<&'static str> for Text<&'static str> {
     }
 }
 
+// Allow constructing cons lists
+impl<A: Vnode, B: Vnode> Vnode for (A, B) {
+    #[inline(always)]
+    fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
+        let (pa, pb) = p.map(|(a, b)| (Some(a), Some(b))).unwrap_or((None, None));
+        let (na, nb) = n.map(|(a, b)| (Some(a), Some(b))).unwrap_or((None, None));
+        B::patch(ctx, pb, nb); // XXX: Do B first!
+        A::patch(ctx, pa, na);
+    }
+}
+
 #[derive(Debug)]
 pub struct Child<P, C>(pub P, pub C);
 
@@ -226,17 +238,67 @@ impl<P: SingleNode, C: Vnode> Vnode for Child<P, C> {
 impl<P: SingleNode, C: SingleNode> SingleNode for Child<P, C> {}
 impl<P: SingleElement, C: SingleNode> SingleElement for Child<P, C> {}
 
+#[doc(hidden)]
+#[macro_export]
+macro_rules! local_stringify {
+    ($s:ident) => {
+        stringify!($s)
+    };
+}
+
+/// Separate implementation to prevent infinite recursion.
+#[doc(hidden)]
+#[macro_export(local_inner_macros)]
+macro_rules! html_impl {
+    // Start of opening tag
+    ($($sibling:ident)? ($($stack:tt)*) < $tag:ident $($tt:tt)+) => {
+        let node = $crate::tags::$tag;
+        html_impl!{@tag (node:$($sibling)?, $($stack)*) $($tt)+}
+    };
+    // End of opening tag
+    (@tag ($($stack:tt)*) > $($tt:tt)+) => {html_impl!{($($stack)*) $($tt)+}};
+    // Self-closing tag
+    (@tag ($node:ident:$($sibling:ident)?, $($stack:tt)*) /> $($tt:tt)+) => {
+        $(let $node = ($sibling, $node);)? // If had siblings
+        html_impl!{$node ($($stack)*) $($tt)*}
+    };
+    // Attribute
+    (@tag ($node:ident $($stack:tt)*) $attr:ident = $val:expr, $($tt:tt)+) => {
+        let $node = $crate::ToAttribute::to_attribute(($val, $node), local_stringify!($attr));
+        html_impl!{@tag ($node $($stack)*) $($tt)*}
+    };
+    // Expression block
+    ($($sibling:ident)? ($($stack:tt)*) { $eval:expr } $($tt:tt)*) => {
+        let node: $crate::Text<&'static str> = $eval.into(); // TODO
+        $(let node = ($sibling, node);)? // If had siblings
+        html_impl!{node ($($stack)*) $($tt)*}
+    };
+    // End tag
+    ($($child:ident)? ($node:ident:$($sibling:ident)?, $($stack:tt)*) </ $tag:ident > $($tt:tt)*) => {
+        $(let $node = $crate::Child($node, $child);)? // If had child
+        $(let $node = ($sibling, $node);)? // If had siblings
+        html_impl!{$node ($($stack)*) $($tt)*}
+    };
+    ($sibling:ident ()) => {$sibling};
+}
+
+/// A convenience macro for building trees with a HTML-esque language.
+#[macro_export]
+macro_rules! html {
+    ($($tt:tt)+) => {{$crate::html_impl!{() $($tt)+}}};
+}
+
 // TODO Parameter for type of value
 /// An attribute on a DOM node.
 #[derive(Debug)]
 pub struct Attribute<N> {
     // Const-generics help here. Could use trait until const-generics arrive, but meh
     /// The name of the DOM attribute.
-    pub name: &'static str,
+    name: &'static str,
     /// The current value of this attribute.
-    pub value: &'static str,
+    value: &'static str,
     /// The virtual node to set the attribute on.
-    pub node: N,
+    node: N,
 }
 
 impl<N: SingleElement> Vnode for Attribute<N> {
@@ -277,19 +339,36 @@ impl<N: SingleElement> Vnode for Attribute<N> {
 impl<N: SingleElement> SingleNode for Attribute<N> {}
 impl<N: SingleElement> SingleElement for Attribute<N> {}
 
-/*pub struct Listener<N, F> {
-    pub event: &'static str,
-    pub callback: F,
-    pub node: N,
+// Note that the callback can never change due to the type being constant
+pub struct Listener<N, F> {
+    // TODO Make constant with const-generics
+    event: &'static str,
+    callback: Cell<Option<F>>,
+    closure: Cell<Option<Closure<FnMut()>>>,
+    node: N,
 }
 
-impl<N: SingleElement, F: FnMut() -> ()> Vnode for Listener<N, F> {
+impl<N: SingleNode, F: FnMut() + 'static> Vnode for Listener<N, F> {
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
         let (pa, pb) = p
-            .map(|Attribute { name, value, node }| (Some((name, value)), Some(node)))
+            .map(
+                |Listener {
+                     event,
+                     callback,
+                     closure,
+                     node,
+                 }| (Some((event, closure)), Some(node)),
+            )
             .unwrap_or((None, None));
         let (na, nb) = n
-            .map(|Attribute { name, value, node }| (Some((name, value)), Some(node)))
+            .map(
+                |Listener {
+                     event,
+                     callback,
+                     closure,
+                     node,
+                 }| (Some((event, callback, closure)), Some(node)),
+            )
             .unwrap_or((None, None));
         N::patch(ctx, pb, nb);
 
@@ -305,77 +384,59 @@ impl<N: SingleElement, F: FnMut() -> ()> Vnode for Listener<N, F> {
         .dyn_ref()
         .expect("Failed to get element from cursor");
         match (pa, na) {
-            (Some((name, _)), None) => element.remove_attribute(name).unwrap(),
-            (None, Some((name, value))) => element.set_attribute(name, value).unwrap(),
-            (Some((name, old)), Some((_, new))) => { /* Can never change */ }
+            (Some(_), None) => {}
+            (None, Some((name, callback, closure))) => {
+                let callback = callback.take().unwrap();
+                let cb = Closure::wrap(Box::new(callback) as Box<dyn FnMut()>);
+                element.add_event_listener_with_callback("click", cb.as_ref().unchecked_ref());
+                closure.set(Some(cb));
+            }
+            (Some((pevent, pclosure)), Some((nevent, _, nclosure))) => {
+                if &pevent != nevent {
+                    unimplemented!()
+                }
+                pclosure.swap(nclosure)
+            }
             _ => unreachable!(),
         }
     }
 }
-*/
 
-// Allow constructing cons lists
-impl<A: Vnode, B: Vnode> Vnode for (A, B) {
-    #[inline(always)]
-    fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
-        let (pa, pb) = p.map(|(a, b)| (Some(a), Some(b))).unwrap_or((None, None));
-        let (na, nb) = n.map(|(a, b)| (Some(a), Some(b))).unwrap_or((None, None));
-        B::patch(ctx, pb, nb); // XXX: Do B first!
-        A::patch(ctx, pa, na);
+impl<N: SingleNode, F: FnMut() + 'static> SingleNode for Listener<N, F> {}
+impl<N: SingleElement, F: FnMut() + 'static> SingleElement for Listener<N, F> {}
+
+impl<N: SingleNode, F: FnMut() + 'static> Listener<N, F> {
+    pub fn unattached(node: N, event: &'static str, callback: F) -> Self {
+        Listener {
+            event,
+            callback: Cell::new(Some(callback)),
+            closure: Cell::new(None),
+            node,
+        }
     }
 }
 
-#[doc(hidden)]
-#[macro_export]
-macro_rules! local_stringify {
-    ($s:ident) => {
-        stringify!($s)
-    };
+pub trait ToAttribute<N: Vnode> {
+    type Output: Vnode;
+    fn to_attribute(self, name: &'static str) -> Self::Output;
 }
 
-#[doc(hidden)]
-#[macro_export(local_inner_macros)]
-macro_rules! html_impl {
-    // Start of opening tag
-    ($($sibling:ident)? ($($stack:tt)*) < $tag:ident $($tt:tt)+) => {
-        let node = $crate::tags::$tag;
-        html_impl!{@tag (node:$($sibling)?, $($stack)*) $($tt)+}
-    };
-    // End of opening tag
-    (@tag ($($stack:tt)*) > $($tt:tt)+) => {html_impl!{($($stack)*) $($tt)+}};
-    // Self-closing tag
-    (@tag ($node:ident:$($sibling:ident)?, $($stack:tt)*) /> $($tt:tt)+) => {
-        $(let $node = ($sibling, $node);)? // If had siblings
-        html_impl!{$node ($($stack)*) $($tt)*}
-    };
-    // Attribute
-    (@tag ($node:ident $($stack:tt)*) $attr:ident = $val:expr, $($tt:tt)+) => {
-        let $node = $crate::Attribute {
-            name: local_stringify!($attr),
-            value: $val,
-            node: $node,
-        };
-        html_impl!{@tag ($node $($stack)*) $($tt)*}
-    };
-    // Expression block
-    ($($sibling:ident)? ($($stack:tt)*) { $eval:expr } $($tt:tt)*) => {
-        let node: $crate::Text<&'static str> = $eval.into(); // TODO
-        $(let node = ($sibling, node);)? // If had siblings
-        html_impl!{node ($($stack)*) $($tt)*}
-    };
-    // End tag
-    ($($child:ident)? ($node:ident:$($sibling:ident)?, $($stack:tt)*) </ $tag:ident > $($tt:tt)*) => {
-        $(let $node = $crate::Child($node, $child);)? // If had child
-        $(let $node = ($sibling, $node);)? // If had siblings
-        html_impl!{$node ($($stack)*) $($tt)*}
-    };
-    ($sibling:ident ()) => {$sibling};
+impl<N: SingleElement> ToAttribute<N> for (&'static str, N) {
+    type Output = Attribute<N>;
+    fn to_attribute(self, name: &'static str) -> Self::Output {
+        Attribute {
+            name,
+            value: self.0,
+            node: self.1,
+        }
+    }
 }
 
-/// A convenience macro for building trees with a HTML-esque language.
-#[macro_export]
-macro_rules! html {
-    ($($tt:tt)+) => {{$crate::html_impl!{() $($tt)+}}};
+impl<N: SingleNode, F: FnMut() + 'static> ToAttribute<N> for (F, N) {
+    type Output = Listener<N, F>;
+    fn to_attribute(self, event: &'static str) -> Self::Output {
+        Listener::unattached(self.1, event, self.0)
+    }
 }
 
 /// A value with an associated key.
