@@ -195,12 +195,6 @@ impl<T: AsRef<str>> Vnode for Text<T> {
 
 impl<T: AsRef<str>> SingleNode for Text<T> {}
 
-impl From<&'static str> for Text<&'static str> {
-    fn from(data: &'static str) -> Self {
-        Text(data)
-    }
-}
-
 // Allow constructing cons lists
 impl<A: Vnode, B: Vnode> Vnode for (A, B) {
     #[inline(always)]
@@ -269,7 +263,7 @@ macro_rules! html_impl {
     };
     // Expression block
     ($($sibling:ident)? ($($stack:tt)*) { $eval:expr } $($tt:tt)*) => {
-        let node: $crate::Text<&'static str> = $eval.into(); // TODO
+        let node = $crate::ToVnode::to_vnode($eval);
         $(let node = ($sibling, node);)? // If had siblings
         html_impl!{node ($($stack)*) $($tt)*}
     };
@@ -436,6 +430,25 @@ impl<N: SingleNode, F: FnMut() + 'static> ToAttribute<N> for (F, N) {
     type Output = Listener<N, F>;
     fn to_attribute(self, event: &'static str) -> Self::Output {
         Listener::unattached(self.1, event, self.0)
+    }
+}
+
+pub trait ToVnode {
+    type Output: Vnode;
+    fn to_vnode(self) -> Self::Output;
+}
+
+impl<T: Vnode> ToVnode for T {
+    type Output = Self;
+    fn to_vnode(self) -> Self::Output {
+        self
+    }
+}
+
+impl ToVnode for &'static str {
+    type Output = Text<Self>;
+    fn to_vnode(self) -> Self::Output {
+        Text(self)
     }
 }
 

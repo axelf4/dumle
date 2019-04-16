@@ -1,8 +1,9 @@
+#![feature(impl_trait_in_bindings)]
 // #![feature(trace_macros)]
 
 // trace_macros!(true);
 
-use dumle::{html, tags::*, Child, Context, Listener, Text, Vnode};
+use dumle::{html, Context, Vnode};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -29,13 +30,10 @@ fn render(switch: bool) -> impl Vnode {
     <button style=if switch { "color: red" } else { "color: blue" },>
     {"imma button"}
     </button>
+    {html! {<button>{"Button"}</button>}}
     </div>
     <button click=move || console_log!("pressed!"),>{"press me"}</button>
     }
-    /*Child(
-        Listener::unattached(button, "click", move || console_log!("hfes")),
-        Text("press me"),
-    )*/
 }
 
 #[wasm_bindgen(start)]
