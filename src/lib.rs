@@ -130,7 +130,7 @@ pub mod tags {
     macro_rules! impl_tags {
         ($($name:ident),+) => {
             $(
-                #[derive(Debug)]
+                #[derive(PartialEq, Eq, Debug)]
                 pub struct $name;
                 impl Element for $name {
                     const NAME: &'static str = stringify!($name);
@@ -258,7 +258,7 @@ macro_rules! html_impl {
     // End of opening tag
     (@tag ($($stack:tt)*) > $($tt:tt)+) => {html_impl!{($($stack)*) $($tt)+}};
     // Self-closing tag
-    (@tag ($node:ident:$($sibling:ident)?, $($stack:tt)*) /> $($tt:tt)+) => {
+    (@tag ($node:ident:$($sibling:ident)?, $($stack:tt)*) /> $($tt:tt)*) => {
         $(let $node = ($sibling, $node);)? // If had siblings
         html_impl!{$node ($($stack)*) $($tt)*}
     };
@@ -474,4 +474,14 @@ pub struct Hook<T, R: Fn(&T, Fn(T)) -> SingleNode> {
     state: RefCell<T>,
     render: R,
     node: Node,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{html, tags::div};
+
+    #[test]
+    fn macro_self_closing_tag() {
+        assert_eq!(html! {<div />}, div)
+    }
 }
