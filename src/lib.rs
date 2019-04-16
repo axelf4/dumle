@@ -235,8 +235,8 @@ impl<P: SingleNode, C: Vnode> Vnode for Child<P, C> {
     }
 }
 
-impl<P: SingleNode, C: SingleNode> SingleNode for Child<P, C> {}
-impl<P: SingleElement, C: SingleNode> SingleElement for Child<P, C> {}
+impl<P: SingleNode, C: Vnode> SingleNode for Child<P, C> {}
+impl<P: SingleElement, C: Vnode> SingleElement for Child<P, C> {}
 
 #[doc(hidden)]
 #[macro_export]
