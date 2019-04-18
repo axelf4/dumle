@@ -452,6 +452,13 @@ impl ToVnode for &'static str {
     }
 }
 
+impl ToVnode for String {
+    type Output = Text<Self>;
+    fn to_vnode(self) -> Self::Output {
+        Text(self)
+    }
+}
+
 /// A value with an associated key.
 pub struct Keyed<K, T> {
     key: K,
