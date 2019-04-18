@@ -3,7 +3,7 @@ use std::cell::Cell;
 use std::hash::Hash;
 use std::mem;
 use wasm_bindgen::JsCast;
-use web_sys::{Document, Node};
+use web_sys::{Document, Event, Node};
 
 use wasm_bindgen::prelude::*;
 
@@ -338,11 +338,11 @@ pub struct Listener<N, F> {
     // TODO Make constant with const-generics
     event: &'static str,
     callback: Cell<Option<F>>,
-    closure: Cell<Option<Closure<FnMut()>>>,
+    closure: Cell<Option<Closure<FnMut(Event)>>>,
     node: N,
 }
 
-impl<N: SingleNode, F: FnMut() + 'static> Vnode for Listener<N, F> {
+impl<N: SingleNode, F: FnMut(Event) + 'static> Vnode for Listener<N, F> {
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
         let (pa, pb) = p
             .map(
@@ -381,7 +381,7 @@ impl<N: SingleNode, F: FnMut() + 'static> Vnode for Listener<N, F> {
             (Some(_), None) => {}
             (None, Some((name, callback, closure))) => {
                 let callback = callback.take().unwrap();
-                let cb = Closure::wrap(Box::new(callback) as Box<dyn FnMut()>);
+                let cb = Closure::wrap(Box::new(callback) as Box<dyn FnMut(Event)>);
                 element.add_event_listener_with_callback("click", cb.as_ref().unchecked_ref());
                 closure.set(Some(cb));
             }
@@ -396,10 +396,10 @@ impl<N: SingleNode, F: FnMut() + 'static> Vnode for Listener<N, F> {
     }
 }
 
-impl<N: SingleNode, F: FnMut() + 'static> SingleNode for Listener<N, F> {}
-impl<N: SingleElement, F: FnMut() + 'static> SingleElement for Listener<N, F> {}
+impl<N: SingleNode, F: FnMut(Event) + 'static> SingleNode for Listener<N, F> {}
+impl<N: SingleElement, F: FnMut(Event) + 'static> SingleElement for Listener<N, F> {}
 
-impl<N: SingleNode, F: FnMut() + 'static> Listener<N, F> {
+impl<N: SingleNode, F: FnMut(Event) + 'static> Listener<N, F> {
     pub fn unattached(node: N, event: &'static str, callback: F) -> Self {
         Listener {
             event,
@@ -426,7 +426,7 @@ impl<N: SingleElement> ToAttribute<N> for (&'static str, N) {
     }
 }
 
-impl<N: SingleNode, F: FnMut() + 'static> ToAttribute<N> for (F, N) {
+impl<N: SingleNode, F: FnMut(Event) + 'static> ToAttribute<N> for (F, N) {
     type Output = Listener<N, F>;
     fn to_attribute(self, event: &'static str) -> Self::Output {
         Listener::unattached(self.1, event, self.0)

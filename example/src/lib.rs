@@ -32,7 +32,7 @@ fn render(switch: bool) -> impl Vnode {
     </button>
     {html! {<button>{"Button"}</button>}}
     </div>
-    <button click=move || console_log!("pressed!"),>{"press me"}</button>
+    <button click=move |_| console_log!("pressed!"),>{"press me"}</button>
     }
 }
 
