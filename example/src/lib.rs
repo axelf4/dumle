@@ -3,7 +3,8 @@
 
 // trace_macros!(true);
 
-use dumle::{html, Context, Vnode};
+use dumle::{hook::UseState, html, Context, KeyedNode, Vnode};
+use std::default::Default;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -24,14 +25,34 @@ extern "C" {
     fn exit_with_live_runtime();
 }
 
+struct State {
+    number: i32,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        State { number: 42 }
+    }
+}
+
 fn render(switch: bool) -> impl Vnode {
     html! {
-    <div>{"hej"}
-    <button style=if switch { "color: red" } else { "color: blue" },>
-    {"imma button"}
-    </button>
-    {html! {<button>{"Button"}</button>}}
-    </div>
+    {
+        UseState::new(|state: &State, set_state| {
+            html! {
+                <div>
+                { state.number.to_string() }
+                <button style=if state.number % 2 == 0 { "color: red;" } else { "color: blue;" },
+                    click=move |_| set_state(&|prev: &State| State {number: prev.number + 1}),>
+                    {"Click me"}
+                </button>
+                </div>
+            }
+        })
+    }
+    {
+        (0..5).into_iter().map(|i| KeyedNode::of(i, html!{<div>{i.to_string()}</div>})).collect::<Vec<_>>()
+    }
     <button click=move |_| console_log!("pressed!"),>{"press me"}</button>
     }
 }
@@ -52,7 +73,6 @@ pub fn run() {
 
     let new = render(true);
     Context::from(body.clone().into()).patch(Some(tree), Some(&new));
-
     console_log!("After second render!");
 
     exit_with_live_runtime();

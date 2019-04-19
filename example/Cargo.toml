@@ -20,7 +20,6 @@ features = [
   "Event",
   "EventTarget",
   "HtmlElement",
-  "MouseEvent",
   "Node",
   "Window",
 ]

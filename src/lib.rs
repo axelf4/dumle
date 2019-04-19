@@ -1,6 +1,7 @@
 use lis::{diff_by_key, DiffCallback};
 use std::cell::Cell;
 use std::hash::Hash;
+use std::marker::PhantomData;
 use std::mem;
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Event, Node};
@@ -95,12 +96,13 @@ impl<E: Element> Vnode for E {
             }
             (Some(_), Some(_)) => {
                 // Update cursor
-                let node = match ctx.cursor {
-                    Cursor::Parent(ref parent) => parent.last_child(),
-                    Cursor::Child(ref sibling) => sibling.previous_sibling(),
-                }
-                .expect("This element is not found");
-                ctx.cursor = Cursor::Child(node);
+                ctx.cursor = Cursor::Child(
+                    match ctx.cursor {
+                        Cursor::Parent(ref parent) => parent.last_child(),
+                        Cursor::Child(ref sibling) => sibling.previous_sibling(),
+                    }
+                    .expect("This element is not found"),
+                );
                 // Updating is no-op
             }
             (Some(_), None) => {
@@ -240,6 +242,7 @@ macro_rules! local_stringify {
     };
 }
 
+// TODO Validate start/end tag name match
 /// Separate implementation to prevent infinite recursion.
 #[doc(hidden)]
 #[macro_export(local_inner_macros)]
@@ -333,7 +336,6 @@ impl<N: SingleElement> Vnode for Attribute<N> {
 impl<N: SingleElement> SingleNode for Attribute<N> {}
 impl<N: SingleElement> SingleElement for Attribute<N> {}
 
-// Note that the callback can never change due to the type being constant
 pub struct Listener<N, F> {
     // TODO Make constant with const-generics
     event: &'static str,
@@ -348,9 +350,9 @@ impl<N: SingleNode, F: FnMut(Event) + 'static> Vnode for Listener<N, F> {
             .map(
                 |Listener {
                      event,
-                     callback,
                      closure,
                      node,
+                     ..
                  }| (Some((event, closure)), Some(node)),
             )
             .unwrap_or((None, None));
@@ -382,7 +384,9 @@ impl<N: SingleNode, F: FnMut(Event) + 'static> Vnode for Listener<N, F> {
             (None, Some((name, callback, closure))) => {
                 let callback = callback.take().unwrap();
                 let cb = Closure::wrap(Box::new(callback) as Box<dyn FnMut(Event)>);
-                element.add_event_listener_with_callback("click", cb.as_ref().unchecked_ref());
+                element
+                    .add_event_listener_with_callback(name, cb.as_ref().unchecked_ref())
+                    .unwrap();
                 closure.set(Some(cb));
             }
             (Some((pevent, pclosure)), Some((nevent, _, nclosure))) => {
@@ -459,42 +463,71 @@ impl ToVnode for String {
     }
 }
 
+// TODO Add If type
+
 /// A value with an associated key.
-pub struct Keyed<K, T> {
+pub struct KeyedNode<K, T> {
     key: K,
     value: T,
+    node: Cell<Option<Node>>,
 }
 
-// TODO store DOM nodes
-/// Keyed lists
-pub struct Dyn<K, T>(Vec<Keyed<K, T>>);
-
-/*impl<K: Eq + Hash, T: SingleNode> Vnode for Dyn<K, T> {
-    fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
-        let old = p.map(|p| p.0).unwrap_or_default();
-        let new = &n.unwrap().0; // TODO
-
-        struct Cb;
-        impl<K: Eq + Hash, T: Vnode> DiffCallback<Keyed<K, T>, &Keyed<K, T>> for Cb {
-            fn inserted(&mut self, new: &Keyed<K, T>) {}
-            fn removed(&mut self, old: Keyed<K, T>) {}
-            fn unchanged(&mut self, old: Keyed<K, T>, new: &Keyed<K, T>) {}
+impl<K, T> KeyedNode<K, T> {
+    pub fn of(key: K, value: T) -> Self {
+        KeyedNode {
+            key,
+            value,
+            node: Cell::new(None),
         }
-        let mut cb = Cb;
-        diff_by_key(old.into_iter(), new.iter(), |x| &x.key, |x| &x.key, &mut cb);
     }
 }
-*/
 
-// Hooks maybe?
-
-use std::cell::RefCell;
-
-pub struct Hook<T, R: Fn(&T, Fn(T)) -> SingleNode> {
-    state: RefCell<T>,
-    render: R,
-    node: Node,
+impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
+    fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
+        match (p, n) {
+            (None, Some(n)) => {
+                for KeyedNode { value, node, .. } in n.iter().rev() {
+                    T::patch(ctx, None, Some(value));
+                    node.set(Some(match ctx.cursor {
+                        Cursor::Child(ref node) => node.clone(),
+                        _ => unreachable!(),
+                    }))
+                }
+            }
+            (Some(p), Some(n)) => {
+                struct Cb<'a, K, T> {
+                    ctx: &'a mut Context,
+                    key_type: PhantomData<K>,
+                    value_type: PhantomData<T>,
+                };
+                impl<'a, K: Eq + Hash, T: SingleNode>
+                    DiffCallback<KeyedNode<K, T>, &KeyedNode<K, T>> for Cb<'a, K, T>
+                {
+                    fn inserted(&mut self, new: &KeyedNode<K, T>) {}
+                    fn removed(&mut self, old: KeyedNode<K, T>) {}
+                    fn unchanged(&mut self, old: KeyedNode<K, T>, new: &KeyedNode<K, T>) {
+                        old.node.swap(&new.node);
+                        T::patch(self.ctx, Some(old.value), Some(&new.value));
+                    }
+                }
+                let mut cb = Cb {
+                    ctx,
+                    key_type: PhantomData,
+                    value_type: PhantomData,
+                };
+                diff_by_key(p.into_iter(), n.iter(), |x| &x.key, |x| &x.key, &mut cb);
+            }
+            (Some(p), None) => {
+                for KeyedNode { value, .. } in p.into_iter().rev() {
+                    T::patch(ctx, Some(value), None);
+                }
+            }
+            _ => unimplemented!(),
+        }
+    }
 }
+
+pub mod hook;
 
 #[cfg(test)]
 mod tests {
