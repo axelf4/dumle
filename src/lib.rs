@@ -234,47 +234,39 @@ impl<P: SingleNode, C: Vnode> Vnode for Child<P, C> {
 impl<P: SingleNode, C: Vnode> SingleNode for Child<P, C> {}
 impl<P: SingleElement, C: Vnode> SingleElement for Child<P, C> {}
 
-#[doc(hidden)]
-#[macro_export]
-macro_rules! local_stringify {
-    ($s:ident) => {
-        stringify!($s)
-    };
-}
-
-// TODO Validate start/end tag name match
 /// Separate implementation to prevent infinite recursion.
 #[doc(hidden)]
-#[macro_export(local_inner_macros)]
+#[macro_export]
 macro_rules! html_impl {
     // Start of opening tag
     ($($sibling:ident)? ($($stack:tt)*) < $tag:ident $($tt:tt)+) => {
         let node = $crate::tags::$tag;
-        html_impl!{@tag (node:$($sibling)?, $($stack)*) $($tt)+}
+        $crate::html_impl!{@tag (node:$tag:$($sibling)?, $($stack)*) $($tt)+}
     };
     // End of opening tag
-    (@tag ($($stack:tt)*) > $($tt:tt)+) => {html_impl!{($($stack)*) $($tt)+}};
+    (@tag ($($stack:tt)*) > $($tt:tt)+) => {$crate::html_impl!{($($stack)*) $($tt)+}};
     // Self-closing tag
-    (@tag ($node:ident:$($sibling:ident)?, $($stack:tt)*) /> $($tt:tt)*) => {
+    (@tag ($node:ident:$name:ident:$($sibling:ident)?, $($stack:tt)*) /> $($tt:tt)*) => {
         $(let $node = ($sibling, $node);)? // If had siblings
-        html_impl!{$node ($($stack)*) $($tt)*}
+        $crate::html_impl!{$node ($($stack)*) $($tt)*}
     };
     // Attribute
     (@tag ($node:ident $($stack:tt)*) $attr:ident = $val:expr, $($tt:tt)+) => {
-        let $node = $crate::ToAttribute::to_attribute(($val, $node), local_stringify!($attr));
-        html_impl!{@tag ($node $($stack)*) $($tt)*}
+        let $node = $crate::ToAttribute::to_attribute(($val, $node), stringify!($attr));
+        $crate::html_impl!{@tag ($node $($stack)*) $($tt)*}
     };
     // Expression block
     ($($sibling:ident)? ($($stack:tt)*) { $eval:expr } $($tt:tt)*) => {
         let node = $crate::ToVnode::to_vnode($eval);
         $(let node = ($sibling, node);)? // If had siblings
-        html_impl!{node ($($stack)*) $($tt)*}
+        $crate::html_impl!{node ($($stack)*) $($tt)*}
     };
     // End tag
-    ($($child:ident)? ($node:ident:$($sibling:ident)?, $($stack:tt)*) </ $tag:ident > $($tt:tt)*) => {
+    ($($child:ident)? ($node:ident:$name:ident:$($sibling:ident)?, $($stack:tt)*) </ $tag:ident > $($tt:tt)*) => {
+        assert_eq!(stringify!($name), stringify!($tag), "Mismatched tag");
         $(let $node = $crate::Child($node, $child);)? // If had child
         $(let $node = ($sibling, $node);)? // If had siblings
-        html_impl!{$node ($($stack)*) $($tt)*}
+        $crate::html_impl!{$node ($($stack)*) $($tt)*}
     };
     ($sibling:ident ()) => {$sibling};
 }
@@ -536,5 +528,11 @@ mod tests {
     #[test]
     fn macro_self_closing_tag() {
         assert_eq!(html! {<div />}, div)
+    }
+
+    #[test]
+    #[should_panic]
+    fn macro_mismatched_tags() {
+        html! {<div></button>};
     }
 }
