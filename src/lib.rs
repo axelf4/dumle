@@ -2,11 +2,9 @@ use lis::{diff_by_key, DiffCallback};
 use std::cell::Cell;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::mem;
-use wasm_bindgen::JsCast;
-use web_sys::{Document, Event, Node};
-
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
+use web_sys::{Document, Event, EventTarget, Node};
 
 #[wasm_bindgen]
 extern "C" {
@@ -51,72 +49,56 @@ fn document() -> Document {
 }
 
 pub trait Vnode {
-    // TODO want check for some/none to be done at compile time
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>)
     where
         Self: Sized;
 }
 
-/// Marker trait for virtual nodes that correspond to a single DOM node.
-pub trait SingleNode: Vnode {}
+/// Trait for virtual nodes that correspond to a single DOM node.
+pub trait SingleNode {
+    fn create_node(&self) -> Node;
 
-/// Marker trait for virtual nodes that correspond to a single DOM element.
-pub trait SingleElement: SingleNode {}
-
-// TODO Add trait for constant nodes
-// And skip updating all children if all children are constant
-
-/// A virtual DOM element with a given name.
-pub trait Element {
-    /// The name of the DOM element.
-    const NAME: &'static str;
+    fn update(&self, _old: Self, _node: &Node)
+    where
+        Self: Sized,
+    {
+    }
 }
 
-impl<E: Element> SingleNode for E {}
-impl<E: Element> SingleElement for E {}
-
-impl<E: Element> Vnode for E {
+impl<T: SingleNode> Vnode for T {
+    #[inline(always)]
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
         match (p, n) {
-            (None, Some(_)) => {
-                let element = document()
-                    .create_element(Self::NAME)
-                    .expect("Failed to create element");
-
+            (None, Some(n)) => {
+                let node = n.create_node();
                 match ctx.cursor {
-                    Cursor::Parent(ref parent) => parent.append_child(&element),
+                    Cursor::Parent(ref parent) => parent.append_child(&node),
                     Cursor::Child(ref sibling) => sibling
                         .parent_node()
                         .expect("No parent")
-                        .insert_before(&element, Some(sibling)),
+                        .insert_before(&node, Some(sibling)),
                 }
                 .expect("Failed to insert child");
-
-                ctx.cursor = Cursor::Child(element.into());
+                ctx.cursor = Cursor::Child(node);
             }
-            (Some(_), Some(_)) => {
-                // Update cursor
-                ctx.cursor = Cursor::Child(
-                    match ctx.cursor {
-                        Cursor::Parent(ref parent) => parent.last_child(),
-                        Cursor::Child(ref sibling) => sibling.previous_sibling(),
-                    }
-                    .expect("This element is not found"),
-                );
-                // Updating is no-op
+            (Some(p), Some(n)) => {
+                let node = match ctx.cursor {
+                    Cursor::Parent(ref parent) => parent.last_child(),
+                    Cursor::Child(ref sibling) => sibling.previous_sibling(),
+                }
+                .expect("This node is not found");
+                n.update(p, &node);
+                ctx.cursor = Cursor::Child(node); // Update cursor
             }
             (Some(_), None) => {
-                // TODO Parent should take care of recursively removing children
                 match ctx.cursor {
-                    Cursor::Parent(ref parent) => parent
-                        .remove_child(&parent.last_child().expect("This element is not found")),
-                    Cursor::Child(ref sibling) => {
-                        sibling.parent_node().expect("No parent node").remove_child(
-                            &sibling
-                                .previous_sibling()
-                                .expect("This element is not found"),
-                        )
+                    Cursor::Parent(ref parent) => {
+                        parent.remove_child(&parent.last_child().expect("This node is not found"))
                     }
+                    Cursor::Child(ref sibling) => sibling
+                        .parent_node()
+                        .expect("No parent node")
+                        .remove_child(&sibling.previous_sibling().expect("This node is not found")),
                 }
                 .expect("Failed to remove node");
             }
@@ -124,6 +106,32 @@ impl<E: Element> Vnode for E {
         }
     }
 }
+
+// TODO Once specialization lands: skip updating children if all are constant
+/// Marker trait for virtual nodes that never need updating once mounted.
+#[allow(unused)]
+pub trait ConstantNode: Vnode {}
+
+/// Marker trait for virtual nodes that correspond to a single DOM element.
+pub trait SingleElement: SingleNode {}
+
+/// A virtual DOM element with a given name.
+pub trait Element {
+    /// The name of the DOM element.
+    const NAME: &'static str;
+}
+
+impl<E: Element> SingleNode for E {
+    #[inline(always)]
+    fn create_node(&self) -> Node {
+        document()
+            .create_element(Self::NAME)
+            .expect("Failed to create element")
+            .into()
+    }
+}
+
+impl<E: Element> SingleElement for E {}
 
 #[allow(non_camel_case_types)]
 pub mod tags {
@@ -149,53 +157,19 @@ pub struct Text<T>(pub T);
 
 // TODO Add ZST for constant text using const generics
 
-impl<T: AsRef<str>> Vnode for Text<T> {
-    fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
-        match (p, n) {
-            (None, Some(Text(data))) => {
-                let node = document().create_text_node(data.as_ref());
+impl<T: AsRef<str> + PartialEq> SingleNode for Text<T> {
+    #[inline(always)]
+    fn create_node(&self) -> Node {
+        document().create_text_node(self.0.as_ref()).into()
+    }
 
-                ctx.cursor = Cursor::Child(
-                    match ctx.cursor {
-                        Cursor::Parent(ref parent) => parent.append_child(&node),
-                        Cursor::Child(ref sibling) => sibling
-                            .parent_node()
-                            .expect("No parent")
-                            .insert_before(&node, Some(sibling)),
-                    }
-                    .expect("Failed to insert child"),
-                );
-            }
-            (Some(Text(ref old)), Some(Text(new))) => {
-                // Update cursor
-                let node = match ctx.cursor {
-                    Cursor::Parent(ref parent) => parent.last_child(),
-                    Cursor::Child(ref sibling) => sibling.previous_sibling(),
-                }
-                .expect("This element is not found");
-                if old.as_ref() != new.as_ref() {
-                    node.set_node_value(Some(new.as_ref()));
-                }
-                ctx.cursor = Cursor::Child(node);
-            }
-            (Some(_), None) => {
-                match ctx.cursor {
-                    Cursor::Parent(ref parent) => {
-                        parent.remove_child(&parent.last_child().expect("This node is not found"))
-                    }
-                    Cursor::Child(ref sibling) => sibling
-                        .parent_node()
-                        .expect("No parent node")
-                        .remove_child(&sibling.previous_sibling().expect("This node is not found")),
-                }
-                .expect("Failed to remove node");
-            }
-            _ => unreachable!(),
+    #[inline(always)]
+    fn update(&self, old: Self, node: &Node) {
+        if old.0 != self.0 {
+            node.set_node_value(Some(self.0.as_ref()));
         }
     }
 }
-
-impl<T: AsRef<str>> SingleNode for Text<T> {}
 
 // Allow constructing cons lists
 impl<A: Vnode, B: Vnode> Vnode for (A, B) {
@@ -211,28 +185,27 @@ impl<A: Vnode, B: Vnode> Vnode for (A, B) {
 #[derive(Debug)]
 pub struct Child<P, C>(pub P, pub C);
 
-impl<P: SingleNode, C: Vnode> Vnode for Child<P, C> {
-    fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
-        let (pa, pb) = p
-            .map(|Child(a, b)| (Some(a), Some(b)))
-            .unwrap_or((None, None));
-        let (na, nb) = n
-            .map(|Child(a, b)| (Some(a), Some(b)))
-            .unwrap_or((None, None));
-        P::patch(ctx, pa, na);
-        // Specify current cursor as parent instead
-        let new_cursor = Cursor::Parent(match ctx.cursor {
-            Cursor::Child(ref node) => node.clone(),
-            Cursor::Parent(_) => unreachable!(),
-        });
-        let old_cur = mem::replace(&mut ctx.cursor, new_cursor);
-        C::patch(ctx, pb, nb);
-        ctx.cursor = old_cur;
+impl<P: SingleNode, C: Vnode> SingleNode for Child<P, C> {
+    #[inline(always)]
+    fn create_node(&self) -> Node {
+        let parent_node = self.0.create_node();
+        let mut ctx = Context {
+            cursor: Cursor::Parent(parent_node.clone()),
+        };
+        C::patch(&mut ctx, None, Some(&self.1));
+        parent_node
+    }
+    #[inline(always)]
+    fn update(&self, old: Self, node: &Node) {
+        self.0.update(old.0, node);
+        let mut ctx = Context {
+            cursor: Cursor::Parent(node.clone()),
+        };
+        C::patch(&mut ctx, Some(old.1), Some(&self.1));
     }
 }
 
-impl<P: SingleNode, C: Vnode> SingleNode for Child<P, C> {}
-impl<P: SingleElement, C: Vnode> SingleElement for Child<P, C> {}
+impl<P: SingleElement, C> SingleElement for Child<P, C> where Child<P, C>: SingleNode {}
 
 /// Separate implementation to prevent infinite recursion.
 #[doc(hidden)]
@@ -278,6 +251,7 @@ macro_rules! html {
 }
 
 // TODO Parameter for type of value
+// TODO Add toggle-able attributes using trait
 /// An attribute on a DOM node.
 #[derive(Debug)]
 pub struct Attribute<N> {
@@ -290,42 +264,27 @@ pub struct Attribute<N> {
     node: N,
 }
 
-impl<N: SingleElement> Vnode for Attribute<N> {
+impl<N: SingleElement> SingleNode for Attribute<N> {
     #[inline(always)]
-    fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
-        let (pa, pb) = p
-            .map(|Attribute { name, value, node }| (Some((name, value)), Some(node)))
-            .unwrap_or((None, None));
-        let (na, nb) = n
-            .map(|Attribute { name, value, node }| (Some((name, value)), Some(node)))
-            .unwrap_or((None, None));
-        N::patch(ctx, pb, nb);
+    fn create_node(&self) -> Node {
+        let node = self.node.create_node();
+        node.unchecked_ref::<web_sys::Element>()
+            .set_attribute(self.name, self.value)
+            .expect("Failed to set attribute");
+        node
+    }
 
-        // Cannot set attribute for removed element
-        if nb.is_none() {
-            return;
-        }
-
-        let element: &web_sys::Element = match &ctx.cursor {
-            Cursor::Child(node) => node,
-            Cursor::Parent(_) => unreachable!(),
-        }
-        .dyn_ref()
-        .expect("Failed to get element from cursor");
-        match (pa, na) {
-            (Some((name, _)), None) => element.remove_attribute(name).unwrap(),
-            (None, Some((name, value))) => element.set_attribute(name, value).unwrap(),
-            (Some((name, old)), Some((_, new))) => {
-                if &old != new {
-                    element.set_attribute(name, new).unwrap()
-                }
-            }
-            _ => unreachable!(),
+    #[inline(always)]
+    fn update(&self, old: Self, node: &Node) {
+        self.node.update(old.node, node);
+        if self.value != old.value {
+            node.unchecked_ref::<web_sys::Element>()
+                .set_attribute(self.name, self.value)
+                .expect("Failed to set attribute");
         }
     }
 }
 
-impl<N: SingleElement> SingleNode for Attribute<N> {}
 impl<N: SingleElement> SingleElement for Attribute<N> {}
 
 pub struct Listener<N, F> {
@@ -336,64 +295,29 @@ pub struct Listener<N, F> {
     node: N,
 }
 
-impl<N: SingleNode, F: FnMut(Event) + 'static> Vnode for Listener<N, F> {
-    fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
-        let (pa, pb) = p
-            .map(
-                |Listener {
-                     event,
-                     closure,
-                     node,
-                     ..
-                 }| (Some((event, closure)), Some(node)),
-            )
-            .unwrap_or((None, None));
-        let (na, nb) = n
-            .map(
-                |Listener {
-                     event,
-                     callback,
-                     closure,
-                     node,
-                 }| (Some((event, callback, closure)), Some(node)),
-            )
-            .unwrap_or((None, None));
-        N::patch(ctx, pb, nb);
+impl<N: SingleNode, F: FnMut(Event) + 'static> SingleNode for Listener<N, F> {
+    fn create_node(&self) -> Node {
+        let node = self.node.create_node();
+        let cb = self.callback.take().unwrap();
+        let cb = Closure::wrap(Box::new(cb) as Box<dyn FnMut(Event)>);
+        node.unchecked_ref::<EventTarget>()
+            .add_event_listener_with_callback(self.event, cb.as_ref().unchecked_ref())
+            .unwrap();
+        self.closure.set(Some(cb));
+        node
+    }
 
-        // Cannot set attribute for removed element
-        if nb.is_none() {
-            return;
+    fn update(&self, old: Self, node: &Node) {
+        self.node.update(old.node, node);
+        if self.event != old.event {
+            unimplemented!()
         }
-
-        let element: &web_sys::Element = match &ctx.cursor {
-            Cursor::Child(node) => node,
-            Cursor::Parent(_) => unreachable!(),
-        }
-        .dyn_ref()
-        .expect("Failed to get element from cursor");
-        match (pa, na) {
-            (Some(_), None) => {}
-            (None, Some((name, callback, closure))) => {
-                let callback = callback.take().unwrap();
-                let cb = Closure::wrap(Box::new(callback) as Box<dyn FnMut(Event)>);
-                element
-                    .add_event_listener_with_callback(name, cb.as_ref().unchecked_ref())
-                    .unwrap();
-                closure.set(Some(cb));
-            }
-            (Some((pevent, pclosure)), Some((nevent, _, nclosure))) => {
-                if &pevent != nevent {
-                    unimplemented!()
-                }
-                pclosure.swap(nclosure)
-            }
-            _ => unreachable!(),
-        }
+        old.closure.swap(&self.closure);
+        // TODO
     }
 }
 
-impl<N: SingleNode, F: FnMut(Event) + 'static> SingleNode for Listener<N, F> {}
-impl<N: SingleElement, F: FnMut(Event) + 'static> SingleElement for Listener<N, F> {}
+impl<N: SingleElement, F> SingleElement for Listener<N, F> where Listener<N, F>: SingleNode {}
 
 impl<N: SingleNode, F: FnMut(Event) + 'static> Listener<N, F> {
     pub fn unattached(node: N, event: &'static str, callback: F) -> Self {
