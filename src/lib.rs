@@ -229,7 +229,7 @@ macro_rules! html_impl {
         $crate::html_impl!{@tag ($node $($stack)*) $($tt)*}
     };
     // Expression block
-    ($($sibling:ident)? ($($stack:tt)*) { $eval:expr } $($tt:tt)*) => {
+    ($($sibling:ident)? ($($stack:tt)*) $eval:block $($tt:tt)*) => {
         let node = $crate::ToVnode::to_vnode($eval);
         $(let node = ($sibling, node);)? // If had siblings
         $crate::html_impl!{node ($($stack)*) $($tt)*}
@@ -458,5 +458,16 @@ mod tests {
     #[should_panic]
     fn macro_mismatched_tags() {
         html! {<div></button>};
+    }
+
+    #[test]
+    fn macro_expression_block() {
+        assert_eq!(
+            html! {{
+                let node = div;
+                node
+            }},
+            div
+        );
     }
 }
