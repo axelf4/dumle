@@ -22,7 +22,7 @@ pub struct UseState<N, S, R>(Cell<UseStatePhase<N, S, R>>);
 
 impl<N: SingleNode, S, R> UseState<N, S, R>
 where
-    R: FnMut(&S, Box<dyn Fn(&Fn(&S) -> S)>) -> N + 'static,
+    R: FnMut(&S, Box<dyn Fn(&Fn(&mut S))>) -> N + 'static,
 {
     pub fn new(render: R) -> Self {
         UseState(Cell::new(UseStatePhase::Unmounted(render)))
@@ -30,26 +30,25 @@ where
 }
 
 fn patch_new_state<N: SingleNode + 'static, S: 'static, R>(
-    new_state: &Fn(&S) -> S,
+    new_state: &Fn(&mut S),
     state: &std::rc::Weak<RefCell<Option<UseStateData<N, S, R>>>>,
 ) where
-    R: FnMut(&S, Box<dyn Fn(&Fn(&S) -> S)>) -> N + 'static,
+    R: FnMut(&S, Box<dyn Fn(&Fn(&mut S))>) -> N + 'static,
 {
     let state = state.upgrade().expect("State should exist");
 
     let update = {
         let state = Rc::downgrade(&state);
         // Parameter type required because of https://github.com/rust-lang/rust/issues/41078
-        Box::new(move |new_state: &Fn(&S) -> S| patch_new_state(new_state, &state))
+        Box::new(move |new_state: &Fn(&mut S)| patch_new_state(new_state, &state))
     };
 
     let mut state = state.borrow_mut();
     let mut state = state.as_mut().unwrap();
 
-    let new_state = new_state(&state.user);
+    new_state(&mut state.user);
     // Render new vnode
-    let pvnode = mem::replace(&mut state.vnode, (state.render)(&new_state, update));
-    state.user = new_state;
+    let pvnode = mem::replace(&mut state.vnode, (state.render)(&state.user, update));
 
     // Reconcile the DOM
     let mut ctx = Context {
@@ -68,7 +67,7 @@ fn patch_new_state<N: SingleNode + 'static, S: 'static, R>(
 
 impl<N: SingleNode + 'static, S: Default + 'static, R> Vnode for UseState<N, S, R>
 where
-    R: FnMut(&S, Box<dyn Fn(&Fn(&S) -> S)>) -> N + 'static,
+    R: FnMut(&S, Box<dyn Fn(&Fn(&mut S))>) -> N + 'static,
 {
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
         match (p, n) {
@@ -77,7 +76,7 @@ where
                 let user = Default::default();
                 let update = {
                     let state = Rc::downgrade(&state);
-                    Box::new(move |new_state: &Fn(&S) -> S| patch_new_state(new_state, &state))
+                    Box::new(move |new_state: &Fn(&mut S)| patch_new_state(new_state, &state))
                 };
 
                 if let UseStatePhase::Unmounted(mut render) =

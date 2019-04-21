@@ -43,7 +43,7 @@ fn render(switch: bool) -> impl Vnode {
                 <div>
                 { state.number.to_string() }
                 <button style=if state.number % 2 == 0 { "color: red;" } else { "color: blue;" },
-                    click=move |_| set_state(&|prev: &State| State {number: prev.number + 1}),>
+                    click=move |_| set_state(&|state: &mut State| state.number += 1),>
                     {"Click me"}
                 </button>
                 {
