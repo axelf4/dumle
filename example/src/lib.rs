@@ -46,12 +46,23 @@ fn render(switch: bool) -> impl Vnode {
                     click=move |_| set_state(&|prev: &State| State {number: prev.number + 1}),>
                     {"Click me"}
                 </button>
+                {
+                    let iter = (0..state.number).into_iter();
+                    let mut vec = if state.number % 2 == 0 {
+                        iter.collect::<Vec<_>>()
+                    } else {
+                        iter.rev().collect()
+                    };
+
+                    if state.number % 5 == 0 {
+                        vec.retain(|&x| x % 2 == 0);
+                    }
+
+                    vec.into_iter().map(|i| KeyedNode::of(i, html!{<div>{i.to_string()}</div>})).collect::<Vec<_>>()
+                }
                 </div>
             }
         })
-    }
-    {
-        (0..5).into_iter().map(|i| KeyedNode::of(i, html!{<div>{i.to_string()}</div>})).collect::<Vec<_>>()
     }
     <button click=move |_| console_log!("pressed!"),>{"press me"}</button>
     }

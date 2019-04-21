@@ -379,8 +379,6 @@ impl ToVnode for String {
     }
 }
 
-// TODO Add If type
-
 /// A value with an associated key.
 pub struct KeyedNode<K, T> {
     key: K,
@@ -400,45 +398,82 @@ impl<K, T> KeyedNode<K, T> {
 
 impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
-        match (p, n) {
-            (None, Some(n)) => {
-                for KeyedNode { value, node, .. } in n.iter().rev() {
-                    T::patch(ctx, None, Some(value));
-                    node.set(Some(match ctx.cursor {
-                        Cursor::Child(ref node) => node.clone(),
-                        _ => unreachable!(),
-                    }))
+        let empty = Vec::new();
+        let (p, n) = (p.unwrap_or(Vec::new()), n.unwrap_or(&empty));
+        struct Cb<K, T> {
+            key_type: PhantomData<K>,
+            value_type: PhantomData<T>,
+            parent: Node,
+            /// The rightmost node last touched.
+            right: Option<Node>,
+            /// The index of the leftmost unchanged new node last touched.
+            left_j: usize,
+        };
+        impl<K: Eq + Hash, T: SingleNode> DiffCallback<KeyedNode<K, T>, (usize, &KeyedNode<K, T>)>
+            for Cb<K, T>
+        {
+            fn inserted(&mut self, (_j, new): (usize, &KeyedNode<K, T>)) {
+                let node = new.value.create_node();
+                self.right = Some(
+                    self.parent
+                        .insert_before(&node, self.right.as_ref())
+                        .expect("Failed to insert node"),
+                );
+                new.node.set(Some(node));
+            }
+            fn removed(&mut self, old: KeyedNode<K, T>) {
+                if let Some(node) = old.node.replace(None) {
+                    self.parent
+                        .remove_child(&node)
+                        .expect("Failed to remove node");
+                } else {
+                    unreachable!()
                 }
             }
-            (Some(p), Some(n)) => {
-                struct Cb<'a, K, T> {
-                    ctx: &'a mut Context,
-                    key_type: PhantomData<K>,
-                    value_type: PhantomData<T>,
-                };
-                impl<'a, K: Eq + Hash, T: SingleNode>
-                    DiffCallback<KeyedNode<K, T>, &KeyedNode<K, T>> for Cb<'a, K, T>
-                {
-                    fn inserted(&mut self, new: &KeyedNode<K, T>) {}
-                    fn removed(&mut self, old: KeyedNode<K, T>) {}
-                    fn unchanged(&mut self, old: KeyedNode<K, T>, new: &KeyedNode<K, T>) {
-                        old.node.swap(&new.node);
-                        T::patch(self.ctx, Some(old.value), Some(&new.value));
-                    }
+            fn unchanged(&mut self, old: KeyedNode<K, T>, (j, new): (usize, &KeyedNode<K, T>)) {
+                let node = old.node.replace(None).expect("Should have node");
+                new.value.update(old.value, &node);
+                if self.left_j == j {
+                    self.left_j += 1;
+                } else {
+                    self.right = Some(node.clone());
                 }
-                let mut cb = Cb {
-                    ctx,
-                    key_type: PhantomData,
-                    value_type: PhantomData,
-                };
-                diff_by_key(p.into_iter(), n.iter(), |x| &x.key, |x| &x.key, &mut cb);
+                new.node.set(Some(node));
             }
-            (Some(p), None) => {
-                for KeyedNode { value, .. } in p.into_iter().rev() {
-                    T::patch(ctx, Some(value), None);
-                }
+            fn moved(&mut self, old: KeyedNode<K, T>, (_j, new): (usize, &KeyedNode<K, T>)) {
+                let node = old.node.replace(None).expect("Should have node");
+                self.right = Some(
+                    self.parent
+                        .insert_before(&node, self.right.as_ref())
+                        .expect("Failed to move node"),
+                );
+                new.value.update(old.value, &node);
+                new.node.set(Some(node));
             }
-            _ => unimplemented!(),
+        }
+        let (parent, right) = match &ctx.cursor {
+            Cursor::Parent(parent) => (parent.clone(), None),
+            Cursor::Child(sibling) => (sibling.parent_node().unwrap(), Some(sibling.clone())),
+        };
+        let mut cb = Cb {
+            key_type: PhantomData,
+            value_type: PhantomData,
+            parent,
+            right,
+            left_j: 0,
+        };
+        diff_by_key(
+            p.into_iter(),
+            |x| &x.key,
+            n.iter().enumerate(),
+            |x| &x.1.key,
+            &mut cb,
+        );
+        // Hackish way to set cursor to first new node
+        if let Some(first) = n.first() {
+            let node = first.node.replace(None).unwrap();
+            ctx.cursor = Cursor::Child(node.clone());
+            first.node.set(Some(node));
         }
     }
 }

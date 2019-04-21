@@ -101,7 +101,7 @@ where
                 }
             }
             (Some(UseState(ref pstate)), Some(UseState(nstate))) => {
-                let _pstate = pstate.swap(nstate);
+                pstate.swap(nstate);
                 // TODO Render new VDOM tree using the NEW render function which
                 // could have copied changed variables
 

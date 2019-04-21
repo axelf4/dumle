@@ -6,7 +6,7 @@ edition = "2018"
 license = "MIT"
 
 [dependencies]
-lis = { path = "../lis" }
+lis = { git = "https://github.com/axelf4/lis" }
 wasm-bindgen = "0.2.42"
 
 [dependencies.web-sys]
