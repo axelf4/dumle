@@ -399,7 +399,7 @@ impl<K, T> KeyedNode<K, T> {
 impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
         let empty = Vec::new();
-        let (p, n) = (p.unwrap_or(Vec::new()), n.unwrap_or(&empty));
+        let (p, n) = (p.unwrap_or_default(), n.unwrap_or(&empty));
         struct Cb<K, T> {
             key_type: PhantomData<K>,
             value_type: PhantomData<T>,
