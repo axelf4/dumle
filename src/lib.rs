@@ -58,7 +58,7 @@ pub trait Vnode {
 pub trait SingleNode {
     fn create_node(&self) -> Node;
 
-    fn update(&self, _old: Self, _node: &Node)
+    fn update(&self, _old: Self, _node: &mut Node)
     where
         Self: Sized,
     {
@@ -82,12 +82,12 @@ impl<T: SingleNode> Vnode for T {
                 ctx.cursor = Cursor::Child(node);
             }
             (Some(p), Some(n)) => {
-                let node = match ctx.cursor {
+                let mut node = match ctx.cursor {
                     Cursor::Parent(ref parent) => parent.last_child(),
                     Cursor::Child(ref sibling) => sibling.previous_sibling(),
                 }
                 .expect("This node is not found");
-                n.update(p, &node);
+                n.update(p, &mut node);
                 ctx.cursor = Cursor::Child(node); // Update cursor
             }
             (Some(_), None) => {
@@ -164,7 +164,7 @@ impl<T: AsRef<str> + PartialEq> SingleNode for Text<T> {
     }
 
     #[inline(always)]
-    fn update(&self, old: Self, node: &Node) {
+    fn update(&self, old: Self, node: &mut Node) {
         if old.0 != self.0 {
             node.set_node_value(Some(self.0.as_ref()));
         }
@@ -202,7 +202,7 @@ impl<P: SingleNode, C: Vnode> SingleNode for Child<P, C> {
         parent_node
     }
     #[inline(always)]
-    fn update(&self, old: Self, node: &Node) {
+    fn update(&self, old: Self, node: &mut Node) {
         self.0.update(old.0, node);
         let mut ctx = Context {
             cursor: Cursor::Parent(node.clone()),
@@ -281,7 +281,7 @@ impl<N: SingleElement> SingleNode for Attribute<N> {
     }
 
     #[inline(always)]
-    fn update(&self, old: Self, node: &Node) {
+    fn update(&self, old: Self, node: &mut Node) {
         self.node.update(old.node, node);
         if self.value != old.value {
             node.unchecked_ref::<web_sys::Element>()
@@ -313,7 +313,7 @@ impl<N: SingleNode, F: FnMut(Event) + 'static> SingleNode for Listener<N, F> {
         node
     }
 
-    fn update(&self, old: Self, node: &Node) {
+    fn update(&self, old: Self, node: &mut Node) {
         self.node.update(old.node, node);
         if self.event != old.event {
             unimplemented!()
@@ -385,6 +385,45 @@ impl ToVnode for String {
     }
 }
 
+pub enum Either<A, B> {
+    A(A),
+    B(B),
+}
+
+impl<A: Vnode, B: Vnode> Vnode for Either<A, B> {
+    fn patch(ctx: &mut Context, old: Option<Self>, new: Option<&Self>) {
+        match (old, new) {
+            (None, Some(new)) => match new {
+                Either::A(new) => A::patch(ctx, None, Some(new)),
+                Either::B(new) => B::patch(ctx, None, Some(new)),
+            },
+            (Some(old), Some(new)) => match old {
+                Either::A(old) => match new {
+                    Either::A(new) => A::patch(ctx, Some(old), Some(new)),
+                    Either::B(new) => {
+                        // TODO Add optimization using replaceNode for SingleNodes
+                        A::patch(ctx, Some(old), None); // Remove old
+                        B::patch(ctx, None, Some(new)); // Add new
+                    }
+                },
+                Either::B(old) => match new {
+                    Either::B(new) => B::patch(ctx, Some(old), Some(new)),
+                    Either::A(new) => {
+                        // TODO Add optimization using replaceNode for SingleNodes
+                        B::patch(ctx, Some(old), None); // Remove old
+                        A::patch(ctx, None, Some(new)); // Add new
+                    }
+                },
+            },
+            (Some(old), None) => match old {
+                Either::A(old) => A::patch(ctx, Some(old), None),
+                Either::B(old) => B::patch(ctx, Some(old), None),
+            },
+            (None, None) => unreachable!(),
+        }
+    }
+}
+
 /// A value with an associated key.
 pub struct KeyedNode<K, T> {
     key: K,
@@ -437,8 +476,8 @@ impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
                 }
             }
             fn unchanged(&mut self, old: KeyedNode<K, T>, (j, new): (usize, &KeyedNode<K, T>)) {
-                let node = old.node.replace(None).expect("Should have node");
-                new.value.update(old.value, &node);
+                let mut node = old.node.replace(None).expect("Should have node");
+                new.value.update(old.value, &mut node);
                 if self.left_j == j {
                     self.left_j += 1;
                 } else {
@@ -447,13 +486,13 @@ impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
                 new.node.set(Some(node));
             }
             fn moved(&mut self, old: KeyedNode<K, T>, (_j, new): (usize, &KeyedNode<K, T>)) {
-                let node = old.node.replace(None).expect("Should have node");
+                let mut node = old.node.replace(None).expect("Should have node");
                 self.right = Some(
                     self.parent
                         .insert_before(&node, self.right.as_ref())
                         .expect("Failed to move node"),
                 );
-                new.value.update(old.value, &node);
+                new.value.update(old.value, &mut node);
                 new.node.set(Some(node));
             }
         }

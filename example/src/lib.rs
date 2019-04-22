@@ -3,7 +3,7 @@
 
 // trace_macros!(true);
 
-use dumle::{hook::UseState, html, Context, KeyedNode, Vnode};
+use dumle::{hook::UseState, html, Context, Either, KeyedNode, Vnode};
 use std::default::Default;
 use wasm_bindgen::prelude::*;
 
@@ -46,6 +46,14 @@ fn render(switch: bool) -> impl Vnode {
                     click=move |_| set_state(&|state: &mut State| state.number += 1),>
                     {"Click me"}
                 </button>
+                {
+                    if state.number % 2 == 0 {
+                        Either::A(html! {<button>{"Even"}</button>})
+                    } else {
+                        // Either::B(html! {<div>{"Odd"}</div>})
+                        Either::B(())
+                    }
+                }
                 {
                     let iter = (0..state.number).into_iter();
                     let mut vec = if state.number % 2 == 0 {
