@@ -182,6 +182,12 @@ impl<A: Vnode, B: Vnode> Vnode for (A, B) {
     }
 }
 
+// Empty virtual node
+impl Vnode for () {
+    #[inline(always)]
+    fn patch(_ctx: &mut Context, _old: Option<Self>, _new: Option<&Self>) {}
+}
+
 #[derive(Debug)]
 pub struct Child<P, C>(pub P, pub C);
 
