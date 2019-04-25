@@ -6,6 +6,7 @@
 use dumle::{hook::UseState, html, Context, Either, KeyedNode, Vnode};
 use std::default::Default;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::throw_str;
 
 #[wasm_bindgen]
 extern "C" {
@@ -17,12 +18,6 @@ extern "C" {
 
 macro_rules! console_log {
     ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
-}
-
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(module = "/index.js")]
-    fn exit_with_live_runtime();
 }
 
 struct State {
@@ -94,5 +89,5 @@ pub fn run() {
     Context::from(body.clone().into()).patch(Some(tree), Some(&new));
     console_log!("After second render!");
 
-    exit_with_live_runtime();
+    throw_str("SimulateInfiniteLoop") // Exit with live runtime
 }
