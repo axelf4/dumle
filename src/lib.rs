@@ -337,21 +337,21 @@ macro_rules! html {
 // TODO Add toggle-able attributes using trait
 /// Virtual node wrapped with an attribute.
 #[derive(Debug)]
-pub struct Attribute<N> {
+pub struct Attribute<N, V> {
     /// The name of the DOM attribute.
     name: &'static str,
     /// The current value of this attribute.
-    value: &'static str,
+    value: V,
     /// The virtual node to set the attribute on.
     node: N,
 }
 
-impl<N: SingleElement> SingleNode for Attribute<N> {
+impl<N: SingleElement, V: AsRef<str> + PartialEq> SingleNode for Attribute<N, V> {
     #[inline(always)]
     fn create_node(&self) -> Node {
         let node = self.node.create_node();
         node.unchecked_ref::<web_sys::Element>()
-            .set_attribute(self.name, self.value)
+            .set_attribute(self.name, self.value.as_ref())
             .expect_throw("Failed to set attribute");
         node
     }
@@ -361,13 +361,13 @@ impl<N: SingleElement> SingleNode for Attribute<N> {
         self.node.update(old.node, node);
         if self.value != old.value {
             node.unchecked_ref::<web_sys::Element>()
-                .set_attribute(self.name, self.value)
+                .set_attribute(self.name, self.value.as_ref())
                 .expect_throw("Failed to set attribute");
         }
     }
 }
 
-impl<N: SingleElement> SingleElement for Attribute<N> {}
+impl<N: SingleElement, V> SingleElement for Attribute<N, V> where Attribute<N, V>: SingleNode {}
 
 /// Virtual node wrapped with an event listener.
 pub struct Listener<N, F> {
@@ -437,7 +437,7 @@ pub trait ToAttribute<N: Vnode> {
 }
 
 impl<N: SingleElement> ToAttribute<N> for (&'static str, N) {
-    type Output = Attribute<N>;
+    type Output = Attribute<N, &'static str>;
     #[inline(always)]
     fn to_attribute(self, name: &'static str) -> Self::Output {
         Attribute {
