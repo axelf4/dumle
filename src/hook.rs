@@ -3,6 +3,7 @@ use std::cell::{Cell, RefCell};
 use std::default::Default;
 use std::mem;
 use std::rc::Rc;
+use wasm_bindgen::UnwrapThrowExt;
 use web_sys::Node;
 
 struct UseStateData<N, S, R> {
@@ -35,7 +36,7 @@ fn patch_new_state<N: SingleNode + 'static, S: 'static, R>(
 ) where
     R: FnMut(&S, Rc<dyn Fn(&Fn(&mut S))>) -> N + 'static,
 {
-    let state = state.upgrade().expect("State should exist");
+    let state = state.upgrade().expect_throw("State should exist");
 
     let update = {
         let state = Rc::downgrade(&state);
@@ -44,7 +45,7 @@ fn patch_new_state<N: SingleNode + 'static, S: 'static, R>(
     };
 
     let mut state = state.borrow_mut();
-    let mut state = state.as_mut().unwrap();
+    let mut state = state.as_mut().unwrap_throw();
 
     new_state(&mut state.user);
     // Render new vnode
@@ -53,13 +54,13 @@ fn patch_new_state<N: SingleNode + 'static, S: 'static, R>(
     // Reconcile the DOM
     let mut ctx = Context {
         cursor: Cursor {
-            parent: state.node.parent_node().unwrap(),
+            parent: state.node.parent_node().unwrap_throw(),
             child: state.node.next_sibling(),
         },
     };
     N::patch(&mut ctx, Some(pvnode), Some(&state.vnode));
     // Store potentially new DOM node
-    state.node = ctx.cursor.child.expect("Should point at node");
+    state.node = ctx.cursor.child.expect_throw("Should point at node");
 }
 
 impl<N: SingleNode + 'static, S: Default + 'static, R> Vnode for UseState<N, S, R>
@@ -81,7 +82,11 @@ where
                 {
                     let vnode = render(&user, update);
                     N::patch(ctx, None, Some(&vnode));
-                    let node = ctx.cursor.child.clone().expect("Should point at node");
+                    let node = ctx
+                        .cursor
+                        .child
+                        .clone()
+                        .expect_throw("Should point at node");
 
                     state.replace(Some(UseStateData {
                         vnode,

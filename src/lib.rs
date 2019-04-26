@@ -2,8 +2,7 @@ use lis::{diff_by_key, DiffCallback};
 use std::cell::Cell;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{prelude::*, JsCast, UnwrapThrowExt};
 use web_sys::{Document, Event, EventTarget, Node};
 
 #[wasm_bindgen]
@@ -48,8 +47,9 @@ impl Context {
     }
 }
 
+/// Returns the top-level document.
 fn document() -> Document {
-    web_sys::window().expect("").document().expect("")
+    web_sys::window().unwrap_throw().document().unwrap_throw()
 }
 
 pub trait Vnode {
@@ -79,7 +79,7 @@ impl<T: SingleNode> Vnode for T {
                     ctx.cursor
                         .parent
                         .insert_before(&node, ctx.cursor.child.as_ref())
-                        .expect("Failed to insert"),
+                        .expect_throw("Failed to insert"),
                 );
             }
             (Some(p), Some(n)) => {
@@ -88,7 +88,7 @@ impl<T: SingleNode> Vnode for T {
                     .child
                     .as_ref()
                     .map_or_else(|| ctx.cursor.parent.last_child(), Node::previous_sibling)
-                    .expect("This node is not found");
+                    .expect_throw("This node is not found");
                 n.update(p, &mut node);
                 ctx.cursor.child = Some(node); // Update cursor
             }
@@ -98,8 +98,8 @@ impl<T: SingleNode> Vnode for T {
                     .child
                     .as_ref()
                     .map_or_else(|| ctx.cursor.parent.last_child(), Node::previous_sibling)
-                    .expect("This node is not found");
-                ctx.cursor.parent.remove_child(&node).unwrap();
+                    .expect_throw("This node is not found");
+                ctx.cursor.parent.remove_child(&node).unwrap_throw();
             }
             _ => unreachable!(),
         }
@@ -125,7 +125,7 @@ impl<E: Element> SingleNode for E {
     fn create_node(&self) -> Node {
         document()
             .create_element(Self::NAME)
-            .expect("Failed to create element")
+            .expect_throw("Failed to create element")
             .into()
     }
 }
@@ -281,7 +281,7 @@ impl<N: SingleElement> SingleNode for Attribute<N> {
         let node = self.node.create_node();
         node.unchecked_ref::<web_sys::Element>()
             .set_attribute(self.name, self.value)
-            .expect("Failed to set attribute");
+            .expect_throw("Failed to set attribute");
         node
     }
 
@@ -291,7 +291,7 @@ impl<N: SingleElement> SingleNode for Attribute<N> {
         if self.value != old.value {
             node.unchecked_ref::<web_sys::Element>()
                 .set_attribute(self.name, self.value)
-                .expect("Failed to set attribute");
+                .expect_throw("Failed to set attribute");
         }
     }
 }
@@ -309,11 +309,11 @@ pub struct Listener<N, F> {
 impl<N: SingleNode, F: FnMut(Event) + 'static> SingleNode for Listener<N, F> {
     fn create_node(&self) -> Node {
         let node = self.node.create_node();
-        let cb = self.callback.take().unwrap();
+        let cb = self.callback.take().unwrap_throw();
         let cb = Closure::wrap(Box::new(cb) as Box<dyn FnMut(Event)>);
         node.unchecked_ref::<EventTarget>()
             .add_event_listener_with_callback(self.event, cb.as_ref().unchecked_ref())
-            .unwrap();
+            .expect_throw("Failed to add event listener");
         self.closure.set(Some(cb));
         node
     }
@@ -467,7 +467,7 @@ impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
                 self.right = Some(
                     self.parent
                         .insert_before(&node, self.right.as_ref())
-                        .expect("Failed to insert node"),
+                        .expect_throw("Failed to insert node"),
                 );
                 new.node.set(Some(node));
             }
@@ -475,13 +475,13 @@ impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
                 if let Some(node) = old.node.replace(None) {
                     self.parent
                         .remove_child(&node)
-                        .expect("Failed to remove node");
+                        .expect_throw("Failed to remove node");
                 } else {
                     unreachable!()
                 }
             }
             fn unchanged(&mut self, old: KeyedNode<K, T>, (j, new): (usize, &KeyedNode<K, T>)) {
-                let mut node = old.node.replace(None).expect("Should have node");
+                let mut node = old.node.replace(None).expect_throw("Should have node");
                 new.value.update(old.value, &mut node);
                 if self.left_j == j {
                     self.left_j += 1;
@@ -491,11 +491,11 @@ impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
                 new.node.set(Some(node));
             }
             fn moved(&mut self, old: KeyedNode<K, T>, (_j, new): (usize, &KeyedNode<K, T>)) {
-                let mut node = old.node.replace(None).expect("Should have node");
+                let mut node = old.node.replace(None).expect_throw("Should have node");
                 self.right = Some(
                     self.parent
                         .insert_before(&node, self.right.as_ref())
-                        .expect("Failed to move node"),
+                        .expect_throw("Failed to move node"),
                 );
                 new.value.update(old.value, &mut node);
                 new.node.set(Some(node));
@@ -517,7 +517,7 @@ impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
         );
         // Hackish way to set cursor to first new node
         if let Some(first) = n.first() {
-            let node = first.node.replace(None).unwrap();
+            let node = first.node.replace(None).unwrap_throw();
             ctx.cursor.child = Some(node.clone());
             first.node.set(Some(node));
         }

@@ -5,8 +5,7 @@
 
 use dumle::{hook::UseState, html, Context, Either, KeyedNode, Vnode};
 use std::default::Default;
-use wasm_bindgen::prelude::*;
-use wasm_bindgen::throw_str;
+use wasm_bindgen::{prelude::*, throw_str, UnwrapThrowExt};
 
 #[wasm_bindgen]
 extern "C" {
@@ -76,9 +75,9 @@ pub fn run() {
     console_error_panic_hook::set_once();
 
     // Get the document's `<body>`
-    let window = web_sys::window().unwrap();
-    let document = window.document().unwrap();
-    let body = document.body().unwrap();
+    let window = web_sys::window().unwrap_throw();
+    let document = window.document().unwrap_throw();
+    let body = document.body().unwrap_throw();
 
     let tree = render(false);
     Context::from(body.clone().into()).patch(None, Some(&tree));
