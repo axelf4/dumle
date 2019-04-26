@@ -1,38 +1,70 @@
+//! Virtual DOM library.
+//!
+//! The [html] macro is used for rendering virtual trees.
+//! The real DOM can then be patched to match a virtual tree with [Context::patch].
+//!
+//! ## Example
+//!
+//! The following example creates a simple counter that can be incremented:
+//!
+//! ```no_run
+//! use dumle::{hook::UseState, html, Context};
+//! use wasm_bindgen::{prelude::*, throw_str, UnwrapThrowExt};
+//!
+//! #[wasm_bindgen(start)]
+//! pub fn run() {
+//!     // Get the document's `<body>`
+//!     let body = web_sys::window()
+//! 		.map(|window| window.document())
+//! 		.map(|document| document.body())
+//! 		.unwrap_throw();
+//!
+//! 	// Render a simple virtual node with a counter
+//!     let vnode = UseState::new(|state: &i32, set_state| {
+//! 		html! {
+//! 			<div>
+//! 				{ state.to_string() }
+//! 				<button click=move |_| set_state(&|state: &mut i32| *state += 1),>
+//! 					{"Increment"}
+//! 				</button>
+//! 			</div>
+//! 		}
+//! 	});
+//!
+//! 	// Patch the real DOM to match the virtual DOM
+//!     Context::from(body.clone().into()).patch(None, Some(&vnode));
+//!
+//!     throw_str("SimulateInfiniteLoop") // Exit with live runtime
+//! }
+//! ```
+
+#![deny(missing_docs, missing_debug_implementations)]
+
 use lis::{diff_by_key, DiffCallback};
 use std::cell::Cell;
-use std::hash::Hash;
 use std::marker::PhantomData;
+use std::{fmt, hash::Hash};
 use wasm_bindgen::{prelude::*, JsCast, UnwrapThrowExt};
 use web_sys::{Document, Event, EventTarget, Node};
 
-#[wasm_bindgen]
-extern "C" {
-    // Use `js_namespace` here to bind `console.log(..)` instead of just
-    // `log(..)`
-    #[wasm_bindgen(js_namespace = console)]
-    fn log(s: &str);
-}
-
-macro_rules! console_log {
-    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
-}
-
 /// Pointer to some DOM node.
 #[derive(Clone, Debug)]
-pub struct Cursor {
+struct Cursor {
     /// The parent DOM node.
     parent: Node,
     /// The DOM node after the pointed at node, or `None` if it's the last child.
     child: Option<Node>,
 }
 
-/// Context during rendering.
+/// Rendering context.
+#[derive(Debug)]
 pub struct Context {
     /// The current DOM node.
     cursor: Cursor,
 }
 
 impl Context {
+    /// Returns a context for rendering into the specified DOM node.
     pub fn from(node: Node) -> Context {
         Context {
             cursor: Cursor {
@@ -42,6 +74,9 @@ impl Context {
         }
     }
 
+    /// Patches the DOM to match the new virtual tree given the previous virtual tree.
+    ///
+    /// Consecutive patches must point at the same DOM node.
     pub fn patch<T: Vnode>(mut self, p: Option<T>, n: Option<&T>) {
         T::patch(&mut self, p, n)
     }
@@ -52,7 +87,9 @@ fn document() -> Document {
     web_sys::window().unwrap_throw().document().unwrap_throw()
 }
 
+/// Virtual DOM node.
 pub trait Vnode {
+    /// Patches the DOM to match the new virtual node given the previous.
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>)
     where
         Self: Sized;
@@ -60,8 +97,12 @@ pub trait Vnode {
 
 /// Trait for virtual nodes that correspond to a single DOM node.
 pub trait SingleNode {
+    /// Returns a DOM representation of this virtual node.
     fn create_node(&self) -> Node;
 
+    /// Updates this virtual node given the DOM node where it is mounted.
+    ///
+    /// The DOM node must change positions however it may be replaced.
     fn update(&self, _old: Self, _node: &mut Node)
     where
         Self: Sized,
@@ -109,12 +150,12 @@ impl<T: SingleNode> Vnode for T {
 // TODO Once specialization lands: skip updating children if all are constant
 /// Marker trait for virtual nodes that never need updating once mounted.
 #[allow(unused)]
-pub trait ConstantNode: Vnode {}
+trait ConstantNode: Vnode {}
 
 /// Marker trait for virtual nodes that correspond to a single DOM element.
 pub trait SingleElement: SingleNode {}
 
-/// A virtual DOM element with a given name.
+/// Virtual DOM element with a given name.
 pub trait Element {
     /// The name of the DOM element.
     const NAME: &'static str;
@@ -132,17 +173,27 @@ impl<E: Element> SingleNode for E {
 
 impl<E: Element> SingleElement for E {}
 
-#[allow(non_camel_case_types)]
+/// Collection of HTML tags.
+#[allow(non_camel_case_types, missing_docs)]
 pub mod tags {
     use super::Element;
+
+    macro_rules! macro_doc {
+        ($x:expr, $($tt:tt)+) => {#[doc = $x] $($tt)+}
+    }
 
     macro_rules! impl_tags {
         ($($name:ident),+) => {
             $(
-                #[derive(PartialEq, Eq, Debug)]
-                pub struct $name;
-                impl Element for $name {
-                    const NAME: &'static str = stringify!($name);
+                macro_doc!{
+                    concat!("The HTML ", stringify!($name),
+                    " tag. [MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/HTML/Element/",
+                    stringify!($name), ")"),
+                    #[derive(PartialEq, Eq, Debug)]
+                    pub struct $name;
+                    impl Element for $name {
+                        const NAME: &'static str = stringify!($name);
+                    }
                 }
             )+
         }
@@ -151,10 +202,9 @@ pub mod tags {
     impl_tags! {div, button}
 }
 
-#[derive(Debug)]
+/// Virtual DOM text node with some data.
+#[derive(PartialEq, Eq, Debug)]
 pub struct Text<T>(pub T);
-
-// TODO Add ZST for constant text using const generics
 
 impl<T: AsRef<str> + PartialEq> SingleNode for Text<T> {
     #[inline(always)]
@@ -170,7 +220,7 @@ impl<T: AsRef<str> + PartialEq> SingleNode for Text<T> {
     }
 }
 
-// Allow constructing cons lists
+/// Allows construction of cons lists.
 impl<A: Vnode, B: Vnode> Vnode for (A, B) {
     #[inline(always)]
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
@@ -181,27 +231,27 @@ impl<A: Vnode, B: Vnode> Vnode for (A, B) {
     }
 }
 
-// Empty virtual node
+/// Empty virtual node. Useful for `if` constructs using [Either].
 impl Vnode for () {
     #[inline(always)]
     fn patch(_ctx: &mut Context, _old: Option<Self>, _new: Option<&Self>) {}
 }
 
-#[derive(Debug)]
+/// Virtual node wrapped with some child node.
+#[derive(PartialEq, Eq, Debug)]
 pub struct Child<P, C>(pub P, pub C);
 
 impl<P: SingleNode, C: Vnode> SingleNode for Child<P, C> {
     #[inline(always)]
     fn create_node(&self) -> Node {
-        let parent_node = self.0.create_node();
         let mut ctx = Context {
             cursor: Cursor {
-                parent: parent_node.clone(),
+                parent: self.0.create_node(),
                 child: None,
             },
         };
         C::patch(&mut ctx, None, Some(&self.1));
-        parent_node
+        ctx.cursor.parent
     }
     #[inline(always)]
     fn update(&self, old: Self, node: &mut Node) {
@@ -255,7 +305,19 @@ macro_rules! html_impl {
     ($sibling:ident ()) => {$sibling};
 }
 
-/// A convenience macro for building trees with a HTML-esque language.
+/// Convenience macro for building trees with an HTML-esque language.
+///
+/// ## Example
+///
+/// ```
+/// use dumle::{html, tags, Child, Text};
+/// assert_eq!(html! {
+///     <div>
+///         {"Text"}
+///         <button />
+///     </div>
+/// }, Child(tags::div, (Text("Text"), tags::button)));
+/// ```
 #[macro_export]
 macro_rules! html {
     ($($tt:tt)+) => {{$crate::html_impl!{() $($tt)+}}};
@@ -263,10 +325,9 @@ macro_rules! html {
 
 // TODO Parameter for type of value
 // TODO Add toggle-able attributes using trait
-/// An attribute on a DOM node.
+/// Virtual node wrapped with an attribute.
 #[derive(Debug)]
 pub struct Attribute<N> {
-    // Const-generics help here. Could use trait until const-generics arrive, but meh
     /// The name of the DOM attribute.
     name: &'static str,
     /// The current value of this attribute.
@@ -298,11 +359,15 @@ impl<N: SingleElement> SingleNode for Attribute<N> {
 
 impl<N: SingleElement> SingleElement for Attribute<N> {}
 
+/// Virtual node wrapped with an event listener.
 pub struct Listener<N, F> {
-    // TODO Make constant with const-generics
+    /// The case-sensitive event-type the listener listens for.
     event: &'static str,
+    /// The listener callback function.
     callback: Cell<Option<F>>,
+    #[doc(hidden)]
     closure: Cell<Option<Closure<FnMut(Event)>>>,
+    /// The virtual node to add the listener to.
     node: N,
 }
 
@@ -331,7 +396,9 @@ impl<N: SingleNode, F: FnMut(Event) + 'static> SingleNode for Listener<N, F> {
 impl<N: SingleElement, F> SingleElement for Listener<N, F> where Listener<N, F>: SingleNode {}
 
 impl<N: SingleNode, F: FnMut(Event) + 'static> Listener<N, F> {
-    pub fn unattached(node: N, event: &'static str, callback: F) -> Self {
+    /// Returns a new unattached [Listener].
+    #[inline(always)]
+    pub fn new(node: N, event: &'static str, callback: F) -> Self {
         Listener {
             event,
             callback: Cell::new(Some(callback)),
@@ -341,13 +408,27 @@ impl<N: SingleNode, F: FnMut(Event) + 'static> Listener<N, F> {
     }
 }
 
+impl<N: fmt::Debug, F> fmt::Debug for Listener<N, F> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Listener {{ event: {}, node: {:?} }}",
+            self.event, self.node
+        )
+    }
+}
+
+/// Trait for types that can be converted to [Attribute]/[Listener]:s.
 pub trait ToAttribute<N: Vnode> {
+    /// The output type of the conversion.
     type Output: Vnode;
+    /// Converts this type given the name of the attribute/event-type.
     fn to_attribute(self, name: &'static str) -> Self::Output;
 }
 
 impl<N: SingleElement> ToAttribute<N> for (&'static str, N) {
     type Output = Attribute<N>;
+    #[inline(always)]
     fn to_attribute(self, name: &'static str) -> Self::Output {
         Attribute {
             name,
@@ -359,18 +440,23 @@ impl<N: SingleElement> ToAttribute<N> for (&'static str, N) {
 
 impl<N: SingleNode, F: FnMut(Event) + 'static> ToAttribute<N> for (F, N) {
     type Output = Listener<N, F>;
+    #[inline(always)]
     fn to_attribute(self, event: &'static str) -> Self::Output {
-        Listener::unattached(self.1, event, self.0)
+        Listener::new(self.1, event, self.0)
     }
 }
 
+/// Trait for types that can be converted to a virtual node.
 pub trait ToVnode {
+    /// The output type of the conversion.
     type Output: Vnode;
+    /// Converts this type into a virtual node.
     fn to_vnode(self) -> Self::Output;
 }
 
 impl<T: Vnode> ToVnode for T {
     type Output = Self;
+    #[inline(always)]
     fn to_vnode(self) -> Self::Output {
         self
     }
@@ -378,6 +464,7 @@ impl<T: Vnode> ToVnode for T {
 
 impl ToVnode for &'static str {
     type Output = Text<Self>;
+    #[inline(always)]
     fn to_vnode(self) -> Self::Output {
         Text(self)
     }
@@ -385,13 +472,18 @@ impl ToVnode for &'static str {
 
 impl ToVnode for String {
     type Output = Text<Self>;
+    #[inline(always)]
     fn to_vnode(self) -> Self::Output {
         Text(self)
     }
 }
 
+/// Virtual node that can be either one of two types.
+#[derive(PartialEq, Eq, Debug)]
 pub enum Either<A, B> {
+    /// The first variant.
     A(A),
+    /// The second variant.
     B(B),
 }
 
@@ -429,20 +521,34 @@ impl<A: Vnode, B: Vnode> Vnode for Either<A, B> {
     }
 }
 
-/// A value with an associated key.
+/// Virtual node with an associated key.
 pub struct KeyedNode<K, T> {
+    /// The key.
     key: K,
+    /// The virtual node.
     value: T,
+    /// The DOM node if mounted, otherwise `None`.
     node: Cell<Option<Node>>,
 }
 
 impl<K, T> KeyedNode<K, T> {
+    /// Returns a new [KeyedNode] with the specified key and virtual node.
     pub fn of(key: K, value: T) -> Self {
         KeyedNode {
             key,
             value,
             node: Cell::new(None),
         }
+    }
+}
+
+impl<K: fmt::Debug, T: fmt::Debug> fmt::Debug for KeyedNode<K, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "KeyedNode {{ key: {:?}, value: {:?} }}",
+            self.key, self.value
+        )
     }
 }
 

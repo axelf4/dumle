@@ -1,16 +1,22 @@
+//! Implementations of [React-style hooks](https://reactjs.org/docs/hooks-overview.html).
+//!
+//! Hooks are virtual nodes that let you *hook into* lifecycle features.
+
 use crate::{Context, Cursor, SingleNode, Vnode};
 use std::cell::{Cell, RefCell};
-use std::default::Default;
-use std::mem;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
+use std::{default::Default, fmt, mem};
 use wasm_bindgen::UnwrapThrowExt;
 use web_sys::Node;
 
 struct UseStateData<N, S, R> {
+    /// The virtual node.
     vnode: N,
+    /// The mounted DOM node.
     node: Node,
     /// User data.
     user: S,
+    /// The render function.
     render: R,
 }
 
@@ -19,12 +25,34 @@ enum UseStatePhase<N, S, R> {
     Live(Rc<RefCell<Option<UseStateData<N, S, R>>>>),
 }
 
+/// Stateful virtual node that renders virtual trees returned by a given function.
+///
+/// The render function is given a reference to the current state and
+/// a function for updating the state, which would prompt a re-render.
+///
+/// ## Example
+///
+/// The following constructs a virtual node that renders a simple counter:
+///
+/// ```no_run
+/// UseState::new(|state: &i32, set_state| {
+///     html! {
+///         <div>
+///             { state.to_string() }
+///             <button click=move |_| set_state(&|state: &mut i32| *state += 1),>
+///                 {"Increment"}
+///             </button>
+///         </div>
+///     }
+/// })
+/// ```
 pub struct UseState<N, S, R>(Cell<UseStatePhase<N, S, R>>);
 
 impl<N: SingleNode, S, R> UseState<N, S, R>
 where
     R: FnMut(&S, Rc<dyn Fn(&Fn(&mut S))>) -> N + 'static,
 {
+    /// Returns a new unmounted [UseState] with the specified render function.
     pub fn new(render: R) -> Self {
         UseState(Cell::new(UseStatePhase::Unmounted(render)))
     }
@@ -32,7 +60,7 @@ where
 
 fn patch_new_state<N: SingleNode + 'static, S: 'static, R>(
     new_state: &Fn(&mut S),
-    state: &std::rc::Weak<RefCell<Option<UseStateData<N, S, R>>>>,
+    state: &Weak<RefCell<Option<UseStateData<N, S, R>>>>,
 ) where
     R: FnMut(&S, Rc<dyn Fn(&Fn(&mut S))>) -> N + 'static,
 {
@@ -113,5 +141,11 @@ where
             (Some(UseState(_state)), None) => { /* TODO */ }
             _ => unreachable!(),
         }
+    }
+}
+
+impl<N, S, R> fmt::Debug for UseState<N, S, R> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "UseState")
     }
 }
