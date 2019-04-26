@@ -138,7 +138,18 @@ where
                     .map_or_else(|| ctx.cursor.parent.last_child(), Node::previous_sibling);
                 debug_assert!(ctx.cursor.child.is_some(), "This node is not found");
             }
-            (Some(UseState(_state)), None) => { /* TODO */ }
+            (Some(UseState(state)), None) => {
+                if let UseStatePhase::Live(state) = state.into_inner() {
+                    let mut state = state.borrow_mut();
+                    if let Some(state) = state.take() {
+                        N::patch(ctx, Some(state.vnode), None);
+                    } else {
+                        unreachable!()
+                    }
+                } else {
+                    unreachable!()
+                }
+            }
             _ => unreachable!(),
         }
     }
