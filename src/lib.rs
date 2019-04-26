@@ -18,24 +18,28 @@ macro_rules! console_log {
     ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
 }
 
+/// Pointer to some DOM node.
 #[derive(Clone, Debug)]
-pub enum Cursor {
-    /// Points at the parent. Behave as if right sibling doesn't exist.
-    Parent(Node),
-    /// Points at the previous sibling.
-    Child(Node),
+pub struct Cursor {
+    /// The parent DOM node.
+    parent: Node,
+    /// The DOM node after the pointed at node, or `None` if it's the last child.
+    child: Option<Node>,
 }
 
 /// Context during rendering.
 pub struct Context {
-    /// The last touched DOM node and its relation to the next node.
+    /// The current DOM node.
     cursor: Cursor,
 }
 
 impl Context {
     pub fn from(node: Node) -> Context {
         Context {
-            cursor: Cursor::Parent(node),
+            cursor: Cursor {
+                parent: node,
+                child: None,
+            },
         }
     }
 
@@ -71,36 +75,31 @@ impl<T: SingleNode> Vnode for T {
         match (p, n) {
             (None, Some(n)) => {
                 let node = n.create_node();
-                match ctx.cursor {
-                    Cursor::Parent(ref parent) => parent.append_child(&node),
-                    Cursor::Child(ref sibling) => sibling
-                        .parent_node()
-                        .expect("No parent")
-                        .insert_before(&node, Some(sibling)),
-                }
-                .expect("Failed to insert child");
-                ctx.cursor = Cursor::Child(node);
+                ctx.cursor.child = Some(
+                    ctx.cursor
+                        .parent
+                        .insert_before(&node, ctx.cursor.child.as_ref())
+                        .expect("Failed to insert"),
+                );
             }
             (Some(p), Some(n)) => {
-                let mut node = match ctx.cursor {
-                    Cursor::Parent(ref parent) => parent.last_child(),
-                    Cursor::Child(ref sibling) => sibling.previous_sibling(),
-                }
-                .expect("This node is not found");
+                let mut node = ctx
+                    .cursor
+                    .child
+                    .as_ref()
+                    .map_or_else(|| ctx.cursor.parent.last_child(), Node::previous_sibling)
+                    .expect("This node is not found");
                 n.update(p, &mut node);
-                ctx.cursor = Cursor::Child(node); // Update cursor
+                ctx.cursor.child = Some(node); // Update cursor
             }
             (Some(_), None) => {
-                match ctx.cursor {
-                    Cursor::Parent(ref parent) => {
-                        parent.remove_child(&parent.last_child().expect("This node is not found"))
-                    }
-                    Cursor::Child(ref sibling) => sibling
-                        .parent_node()
-                        .expect("No parent node")
-                        .remove_child(&sibling.previous_sibling().expect("This node is not found")),
-                }
-                .expect("Failed to remove node");
+                let node = ctx
+                    .cursor
+                    .child
+                    .as_ref()
+                    .map_or_else(|| ctx.cursor.parent.last_child(), Node::previous_sibling)
+                    .expect("This node is not found");
+                ctx.cursor.parent.remove_child(&node).unwrap();
             }
             _ => unreachable!(),
         }
@@ -196,7 +195,10 @@ impl<P: SingleNode, C: Vnode> SingleNode for Child<P, C> {
     fn create_node(&self) -> Node {
         let parent_node = self.0.create_node();
         let mut ctx = Context {
-            cursor: Cursor::Parent(parent_node.clone()),
+            cursor: Cursor {
+                parent: parent_node.clone(),
+                child: None,
+            },
         };
         C::patch(&mut ctx, None, Some(&self.1));
         parent_node
@@ -205,7 +207,10 @@ impl<P: SingleNode, C: Vnode> SingleNode for Child<P, C> {
     fn update(&self, old: Self, node: &mut Node) {
         self.0.update(old.0, node);
         let mut ctx = Context {
-            cursor: Cursor::Parent(node.clone()),
+            cursor: Cursor {
+                parent: node.clone(),
+                child: None,
+            },
         };
         C::patch(&mut ctx, Some(old.1), Some(&self.1));
     }
@@ -445,17 +450,17 @@ impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
         let empty = Vec::new();
         let (p, n) = (p.unwrap_or_default(), n.unwrap_or(&empty));
-        struct Cb<K, T> {
+        struct Cb<'a, K, T> {
             key_type: PhantomData<K>,
             value_type: PhantomData<T>,
-            parent: Node,
+            parent: &'a Node,
             /// The rightmost node last touched.
             right: Option<Node>,
             /// The index of the leftmost unchanged new node last touched.
             left_j: usize,
         };
         impl<K: Eq + Hash, T: SingleNode> DiffCallback<KeyedNode<K, T>, (usize, &KeyedNode<K, T>)>
-            for Cb<K, T>
+            for Cb<'_, K, T>
         {
             fn inserted(&mut self, (_j, new): (usize, &KeyedNode<K, T>)) {
                 let node = new.value.create_node();
@@ -496,15 +501,11 @@ impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
                 new.node.set(Some(node));
             }
         }
-        let (parent, right) = match &ctx.cursor {
-            Cursor::Parent(parent) => (parent.clone(), None),
-            Cursor::Child(sibling) => (sibling.parent_node().unwrap(), Some(sibling.clone())),
-        };
         let mut cb = Cb {
             key_type: PhantomData,
             value_type: PhantomData,
-            parent,
-            right,
+            parent: &ctx.cursor.parent,
+            right: ctx.cursor.child.clone(),
             left_j: 0,
         };
         diff_by_key(
@@ -517,7 +518,7 @@ impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
         // Hackish way to set cursor to first new node
         if let Some(first) = n.first() {
             let node = first.node.replace(None).unwrap();
-            ctx.cursor = Cursor::Child(node.clone());
+            ctx.cursor.child = Some(node.clone());
             first.node.set(Some(node));
         }
     }

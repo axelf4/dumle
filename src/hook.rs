@@ -52,17 +52,14 @@ fn patch_new_state<N: SingleNode + 'static, S: 'static, R>(
 
     // Reconcile the DOM
     let mut ctx = Context {
-        cursor: match state.node.next_sibling() {
-            Some(sibling) => Cursor::Child(sibling),
-            None => Cursor::Parent(state.node.parent_node().unwrap()),
+        cursor: Cursor {
+            parent: state.node.parent_node().unwrap(),
+            child: state.node.next_sibling(),
         },
     };
     N::patch(&mut ctx, Some(pvnode), Some(&state.vnode));
     // Store potentially new DOM node
-    state.node = match ctx.cursor {
-        Cursor::Child(node) => node,
-        _ => unreachable!(),
-    }
+    state.node = ctx.cursor.child.expect("Should point at node");
 }
 
 impl<N: SingleNode + 'static, S: Default + 'static, R> Vnode for UseState<N, S, R>
@@ -84,10 +81,7 @@ where
                 {
                     let vnode = render(&user, update);
                     N::patch(ctx, None, Some(&vnode));
-                    let node = match ctx.cursor {
-                        Cursor::Child(ref node) => node.clone(),
-                        _ => unreachable!(),
-                    };
+                    let node = ctx.cursor.child.clone().expect("Should point at node");
 
                     state.replace(Some(UseStateData {
                         vnode,
@@ -104,13 +98,12 @@ where
                 // TODO Render new VDOM tree using the NEW render function which
                 // could have copied changed variables
 
-                ctx.cursor = Cursor::Child(
-                    match ctx.cursor {
-                        Cursor::Parent(ref parent) => parent.last_child(),
-                        Cursor::Child(ref sibling) => sibling.previous_sibling(),
-                    }
-                    .expect("This element is not found"),
-                );
+                ctx.cursor.child = ctx
+                    .cursor
+                    .child
+                    .as_ref()
+                    .map_or_else(|| ctx.cursor.parent.last_child(), Node::previous_sibling);
+                debug_assert!(ctx.cursor.child.is_some(), "This node is not found");
             }
             (Some(UseState(_state)), None) => { /* TODO */ }
             _ => unreachable!(),
