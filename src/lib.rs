@@ -156,28 +156,27 @@ trait ConstantNode: Vnode {}
 pub trait SingleElement: SingleNode {}
 
 /// Virtual DOM element with a given name.
-pub trait Element {
+#[derive(PartialEq, Eq, Debug)]
+pub struct Element<T> {
     /// The name of the DOM element.
-    const NAME: &'static str;
+    pub name: T,
 }
 
-impl<E: Element> SingleNode for E {
+impl<T: AsRef<str>> SingleNode for Element<T> {
     #[inline(always)]
     fn create_node(&self) -> Node {
         document()
-            .create_element(Self::NAME)
+            .create_element(self.name.as_ref())
             .expect_throw("Failed to create element")
             .into()
     }
 }
 
-impl<E: Element> SingleElement for E {}
+impl<T> SingleElement for Element<T> where Element<T>: SingleNode {}
 
-/// Collection of HTML tags.
-#[allow(non_camel_case_types)]
+/// Collection of HTML tag names.
+#[allow(non_camel_case_types, missing_docs)]
 pub mod tags {
-    use super::Element;
-
     macro_rules! macro_doc {
         ($x:expr, $($tt:tt)+) => {#[doc = $x] $($tt)+}
     }
@@ -191,8 +190,11 @@ pub mod tags {
                     stringify!($name), ")"),
                     #[derive(PartialEq, Eq, Debug)]
                     pub struct $name;
-                    impl Element for $name {
-                        const NAME: &'static str = stringify!($name);
+                    impl AsRef<str> for $name {
+                        #[inline(always)]
+                        fn as_ref(&self) -> &str {
+                            stringify!($name)
+                        }
                     }
                 }
             )+
@@ -290,7 +292,7 @@ impl<P: SingleElement, C> SingleElement for Child<P, C> where Child<P, C>: Singl
 macro_rules! html_impl {
     // Start of opening tag
     ($($sibling:ident)? ($($stack:tt)*) < $tag:ident $($tt:tt)+) => {
-        let node = $crate::tags::$tag;
+        let node = $crate::Element{ name: $crate::tags::$tag };
         $crate::html_impl!{@tag (node:$tag:$($sibling)?, $($stack)*) $($tt)+}
     };
     // End of opening tag
@@ -326,13 +328,13 @@ macro_rules! html_impl {
 /// ## Example
 ///
 /// ```
-/// use dumle::{html, tags, Child, Cons, Text};
+/// use dumle::{html, tags, Child, Cons, Element, Text};
 /// assert_eq!(html! {
 ///     <div>
 ///         {"Text"}
 ///         <button />
 ///     </div>
-/// }, Child(tags::div, Cons(Text("Text"), tags::button)));
+/// }, Child(Element { name: tags::div }, Cons(Text("Text"), Element { name: tags::button })));
 /// ```
 #[macro_export]
 macro_rules! html {
@@ -650,11 +652,11 @@ pub mod hook;
 
 #[cfg(test)]
 mod tests {
-    use super::{html, tags::div};
+    use super::{html, tags::div, Element};
 
     #[test]
     fn macro_self_closing_tag() {
-        assert_eq!(html! {<div />}, div)
+        assert_eq!(html! {<div />}, Element { name: div })
     }
 
     #[test]
@@ -667,10 +669,10 @@ mod tests {
     fn macro_expression_block() {
         assert_eq!(
             html! {{
-                let node = div;
+                let node = Element{name: div};
                 node
             }},
-            div
+            Element { name: div }
         );
     }
 }
