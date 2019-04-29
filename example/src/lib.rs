@@ -2,7 +2,7 @@
 
 // trace_macros!(true);
 
-use dumle::{hook::UseState, html, Context, Either, KeyedNode, Vnode};
+use dumle::{hook::UseState, html, Context, Either, Empty, KeyedNode, Vnode};
 use std::default::Default;
 use wasm_bindgen::{prelude::*, throw_str, UnwrapThrowExt};
 
@@ -44,7 +44,7 @@ fn render(switch: bool) -> impl Vnode {
                         Either::A(html! {<button>{"Even"}</button>})
                     } else {
                         // Either::B(html! {<div>{"Odd"}</div>})
-                        Either::B(())
+                        Either::B(Empty)
                     }
                 }
                 {

@@ -230,19 +230,25 @@ impl<T: AsRef<str> + PartialEq> SingleNode for Text<T> {
     }
 }
 
-/// Allows construction of cons lists.
-impl<A: Vnode, B: Vnode> Vnode for (A, B) {
+/// Pair of sibling virtual nodes.
+#[derive(PartialEq, Eq, Debug)]
+pub struct Cons<A, B>(pub A, pub B);
+
+impl<A: Vnode, B: Vnode> Vnode for Cons<A, B> {
     #[inline(always)]
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
-        let (pa, pb) = p.map(|(a, b)| (Some(a), Some(b))).unwrap_or((None, None));
-        let (na, nb) = n.map(|(a, b)| (Some(a), Some(b))).unwrap_or((None, None));
+        let (pa, pb) = p.map_or((None, None), |Cons(a, b)| (Some(a), Some(b)));
+        let (na, nb) = n.map_or((None, None), |Cons(a, b)| (Some(a), Some(b)));
         B::patch(ctx, pb, nb); // XXX: Do B first!
         A::patch(ctx, pa, na);
     }
 }
 
 /// Empty virtual node. Useful for `if` constructs using [Either].
-impl Vnode for () {
+#[derive(PartialEq, Eq, Debug)]
+pub struct Empty;
+
+impl Vnode for Empty {
     #[inline(always)]
     fn patch(_ctx: &mut Context, _old: Option<Self>, _new: Option<&Self>) {}
 }
@@ -291,7 +297,7 @@ macro_rules! html_impl {
     (@tag ($($stack:tt)*) > $($tt:tt)+) => {$crate::html_impl!{($($stack)*) $($tt)+}};
     // Self-closing tag
     (@tag ($node:ident:$name:ident:$($sibling:ident)?, $($stack:tt)*) /> $($tt:tt)*) => {
-        $(let $node = ($sibling, $node);)? // If had siblings
+        $(let $node = $crate::Cons($sibling, $node);)? // If had siblings
         $crate::html_impl!{$node ($($stack)*) $($tt)*}
     };
     // Attribute
@@ -302,14 +308,14 @@ macro_rules! html_impl {
     // Expression block
     ($($sibling:ident)? ($($stack:tt)*) $eval:block $($tt:tt)*) => {
         let node = $crate::ToVnode::to_vnode($eval);
-        $(let node = ($sibling, node);)? // If had siblings
+        $(let node = $crate::Cons($sibling, node);)? // If had siblings
         $crate::html_impl!{node ($($stack)*) $($tt)*}
     };
     // End tag
     ($($child:ident)? ($node:ident:$name:ident:$($sibling:ident)?, $($stack:tt)*) </ $tag:ident > $($tt:tt)*) => {
         assert_eq!(stringify!($name), stringify!($tag), "Mismatched tag");
         $(let $node = $crate::Child($node, $child);)? // If had child
-        $(let $node = ($sibling, $node);)? // If had siblings
+        $(let $node = $crate::Cons($sibling, $node);)? // If had siblings
         $crate::html_impl!{$node ($($stack)*) $($tt)*}
     };
     ($sibling:ident ()) => {$sibling};
@@ -320,13 +326,13 @@ macro_rules! html_impl {
 /// ## Example
 ///
 /// ```
-/// use dumle::{html, tags, Child, Text};
+/// use dumle::{html, tags, Child, Cons, Text};
 /// assert_eq!(html! {
 ///     <div>
 ///         {"Text"}
 ///         <button />
 ///     </div>
-/// }, Child(tags::div, (Text("Text"), tags::button)));
+/// }, Child(tags::div, Cons(Text("Text"), tags::button)));
 /// ```
 #[macro_export]
 macro_rules! html {

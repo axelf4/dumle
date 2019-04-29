@@ -53,7 +53,7 @@ html! {
 }
 ```
 
-gets turned into `(Child(div, button), img)` which is a zero-sized type.
+gets turned into `Cons(Child(div, button), img)` which is a zero-sized type.
 Thus the compiler can inline the whole reconciliation phase, should it want to.
 This means that dumle can get by with a simple `macro_rules!` macro instead of
 a full blown procedural macro while generating the same code.
