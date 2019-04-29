@@ -16,4 +16,4 @@ wasm-bindgen = "0.2.42"
 
 [dependencies.web-sys]
 version = "0.3.19"
-features = ["Document", "Element", "Node", "Text", "Window", "Event", "EventTarget"]
+features = ["Document", "Element", "Node", "Text", "Window", "Event", "EventTarget", "HtmlElement"]

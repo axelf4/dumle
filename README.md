@@ -14,8 +14,8 @@ use wasm_bindgen::{prelude::*, throw_str, UnwrapThrowExt};
 pub fn run() {
 	// Get the document's `<body>`
 	let body = web_sys::window()
-		.map(|window| window.document())
-		.map(|document| document.body())
+		.and_then(|window| window.document())
+		.and_then(|document| document.body())
 		.unwrap_throw();
 
 	// Render a simple virtual node with a counter

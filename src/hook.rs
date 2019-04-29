@@ -35,7 +35,8 @@ enum UseStatePhase<N, S, R> {
 /// The following constructs a virtual node that renders a simple counter:
 ///
 /// ```no_run
-/// UseState::new(|state: &i32, set_state| {
+/// use dumle::{html, hook::UseState};
+/// let node = UseState::new(|state: &i32, set_state| {
 ///     html! {
 ///         <div>
 ///             { state.to_string() }
@@ -44,7 +45,7 @@ enum UseStatePhase<N, S, R> {
 ///             </button>
 ///         </div>
 ///     }
-/// })
+/// });
 /// ```
 pub struct UseState<N, S, R>(Cell<UseStatePhase<N, S, R>>);
 
