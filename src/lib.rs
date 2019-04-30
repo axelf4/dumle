@@ -152,14 +152,40 @@ impl<T: SingleNode> Vnode for T {
 #[allow(unused)]
 trait ConstantNode: Vnode {}
 
-/// Marker trait for virtual nodes that correspond to a single DOM element.
-pub trait SingleElement: SingleNode {}
+/// Trait for virtual nodes that correspond to a single DOM element.
+///
+/// HTML rendering is split into two segments, represented by [SingleElement::fmt_tag_name_attrs] and
+/// [SingleElement::fmt_contents_end_tag]:
+///
+/// ```text
+/// {tag_name_attrs: <tag-name attribute=value}>{contents_end_tag: contents</tag-name>}
+/// ```
+pub trait SingleElement: SingleNode {
+    /// Formats the start tag without the trailing `>`.
+    fn fmt_tag_name_attrs(&self, f: &mut fmt::Formatter) -> fmt::Result;
+    /// Formats the contents and the end tag.
+    fn fmt_contents_end_tag(&self, f: &mut fmt::Formatter) -> fmt::Result;
+}
 
 /// Virtual DOM element with a given name.
 #[derive(PartialEq, Eq, Debug)]
 pub struct Element<T> {
     /// The name of the DOM element.
     pub name: T,
+}
+
+impl<T: AsRef<str>> Element<T> {
+    /// Returns whether this element is a void element and thus disallowed to have contents.
+    #[inline(always)]
+    fn is_void(&self) -> bool {
+        if let "area" | "base" | "br" | "col" | "command" | "embed" | "hr" | "img" | "input"
+        | "keygen" | "link" | "meta" | "param" | "source" | "track" | "wbr" = self.name.as_ref()
+        {
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl<T: AsRef<str>> SingleNode for Element<T> {
@@ -172,7 +198,35 @@ impl<T: AsRef<str>> SingleNode for Element<T> {
     }
 }
 
-impl<T> SingleElement for Element<T> where Element<T>: SingleNode {}
+impl<T: AsRef<str>> SingleElement for Element<T>
+where
+    Element<T>: SingleNode,
+{
+    #[inline(always)]
+    fn fmt_tag_name_attrs(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "<{}", self.name.as_ref())
+    }
+    #[inline(always)]
+    fn fmt_contents_end_tag(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.is_void() {
+            Ok(())
+        } else {
+            write!(f, "</{name}>", name = self.name.as_ref())
+        }
+    }
+}
+
+impl<T> fmt::Display for Element<T>
+where
+    Element<T>: SingleElement,
+{
+    #[inline(always)]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.fmt_tag_name_attrs(f)?;
+        write!(f, ">")?;
+        self.fmt_contents_end_tag(f)
+    }
+}
 
 /// Collection of HTML tag names.
 #[allow(non_camel_case_types, missing_docs)]
@@ -232,6 +286,13 @@ impl<T: AsRef<str> + PartialEq> SingleNode for Text<T> {
     }
 }
 
+impl<T: fmt::Display> fmt::Display for Text<T> {
+    #[inline(always)]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0) // TODO Escape text
+    }
+}
+
 /// Pair of sibling virtual nodes.
 #[derive(PartialEq, Eq, Debug)]
 pub struct Cons<A, B>(pub A, pub B);
@@ -246,6 +307,13 @@ impl<A: Vnode, B: Vnode> Vnode for Cons<A, B> {
     }
 }
 
+impl<A: fmt::Display, B: fmt::Display> fmt::Display for Cons<A, B> {
+    #[inline(always)]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}{}", self.0, self.1)
+    }
+}
+
 /// Empty virtual node. Useful for `if` constructs using [Either].
 #[derive(PartialEq, Eq, Debug)]
 pub struct Empty;
@@ -253,6 +321,13 @@ pub struct Empty;
 impl Vnode for Empty {
     #[inline(always)]
     fn patch(_ctx: &mut Context, _old: Option<Self>, _new: Option<&Self>) {}
+}
+
+impl fmt::Display for Empty {
+    #[inline(always)]
+    fn fmt(&self, _f: &mut fmt::Formatter) -> fmt::Result {
+        Ok(())
+    }
 }
 
 /// Virtual node wrapped with some child node.
@@ -284,7 +359,32 @@ impl<P: SingleNode, C: Vnode> SingleNode for Child<P, C> {
     }
 }
 
-impl<P: SingleElement, C> SingleElement for Child<P, C> where Child<P, C>: SingleNode {}
+impl<P: SingleElement, C: fmt::Display> SingleElement for Child<P, C>
+where
+    Child<P, C>: SingleNode,
+{
+    #[inline(always)]
+    fn fmt_tag_name_attrs(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt_tag_name_attrs(f)
+    }
+    #[inline(always)]
+    fn fmt_contents_end_tag(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.1)?;
+        self.0.fmt_contents_end_tag(f)
+    }
+}
+
+impl<P, C> fmt::Display for Child<P, C>
+where
+    Child<P, C>: SingleElement,
+{
+    #[inline(always)]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.fmt_tag_name_attrs(f)?;
+        write!(f, ">")?;
+        self.fmt_contents_end_tag(f)
+    }
+}
 
 /// Separate implementation to prevent infinite recursion.
 #[doc(hidden)]
@@ -375,7 +475,37 @@ impl<N: SingleElement, V: AsRef<str> + PartialEq> SingleNode for Attribute<N, V>
     }
 }
 
-impl<N: SingleElement, V> SingleElement for Attribute<N, V> where Attribute<N, V>: SingleNode {}
+impl<N: SingleElement, V: AsRef<str>> SingleElement for Attribute<N, V>
+where
+    Attribute<N, V>: SingleNode,
+{
+    #[inline(always)]
+    fn fmt_tag_name_attrs(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.node.fmt_tag_name_attrs(f)?;
+        write!(
+            f,
+            " {name}=\"{value}\"",
+            name = self.name,
+            value = self.value.as_ref()
+        )
+    }
+    #[inline(always)]
+    fn fmt_contents_end_tag(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.node.fmt_contents_end_tag(f)
+    }
+}
+
+impl<N, V> fmt::Display for Attribute<N, V>
+where
+    Attribute<N, V>: SingleElement,
+{
+    #[inline(always)]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.fmt_tag_name_attrs(f)?;
+        write!(f, ">")?;
+        self.fmt_contents_end_tag(f)
+    }
+}
 
 /// Virtual node wrapped with an event listener.
 pub struct Listener<N, F> {
@@ -411,7 +541,31 @@ impl<N: SingleNode, F: FnMut(Event) + 'static> SingleNode for Listener<N, F> {
     }
 }
 
-impl<N: SingleElement, F> SingleElement for Listener<N, F> where Listener<N, F>: SingleNode {}
+impl<N: SingleElement, F> SingleElement for Listener<N, F>
+where
+    Listener<N, F>: SingleNode,
+{
+    #[inline(always)]
+    fn fmt_tag_name_attrs(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.node.fmt_tag_name_attrs(f)
+    }
+    #[inline(always)]
+    fn fmt_contents_end_tag(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.node.fmt_contents_end_tag(f)
+    }
+}
+
+impl<N, F> fmt::Display for Listener<N, F>
+where
+    Listener<N, F>: SingleElement,
+{
+    #[inline(always)]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.fmt_tag_name_attrs(f)?;
+        write!(f, ">")?;
+        self.fmt_contents_end_tag(f)
+    }
+}
 
 impl<N: SingleNode, F: FnMut(Event) + 'static> Listener<N, F> {
     /// Returns a new unattached [Listener].
@@ -539,6 +693,16 @@ impl<A: Vnode, B: Vnode> Vnode for Either<A, B> {
     }
 }
 
+impl<A: fmt::Display, B: fmt::Display> fmt::Display for Either<A, B> {
+    #[inline(always)]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Either::A(node) => node.fmt(f),
+            Either::B(node) => node.fmt(f),
+        }
+    }
+}
+
 /// Virtual node with an associated key.
 pub struct KeyedNode<K, T> {
     /// The key.
@@ -652,7 +816,11 @@ pub mod hook;
 
 #[cfg(test)]
 mod tests {
-    use super::{html, tags::div, Element};
+    use super::{
+        html,
+        tags::{br, div},
+        Element,
+    };
 
     #[test]
     fn macro_self_closing_tag() {
@@ -674,5 +842,11 @@ mod tests {
             }},
             Element { name: div }
         );
+    }
+
+    #[test]
+    fn format_elements() {
+        assert_eq!(format!("{}", Element { name: div }), "<div></div>");
+        assert_eq!(format!("{}", Element { name: br }), "<br>");
     }
 }
