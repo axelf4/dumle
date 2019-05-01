@@ -650,6 +650,17 @@ impl ToVnode for String {
     }
 }
 
+impl<K, T> ToVnode for Vec<KeyedNode<K, T>>
+where
+    KeyedList<Self>: Vnode,
+{
+    type Output = KeyedList<Self>;
+    #[inline(always)]
+    fn to_vnode(self) -> Self::Output {
+        KeyedList(self)
+    }
+}
+
 /// Virtual node that can be either one of two types.
 #[derive(PartialEq, Eq, Debug)]
 pub enum Either<A, B> {
@@ -734,10 +745,30 @@ impl<K: fmt::Debug, T: fmt::Debug> fmt::Debug for KeyedNode<K, T> {
     }
 }
 
-impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
+impl<K, T: fmt::Display> fmt::Display for KeyedNode<K, T> {
+    #[inline(always)]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+/// Keyed list of virtual nodes.
+#[derive(PartialEq, Eq, Debug, Default)]
+pub struct KeyedList<I>(pub I);
+
+impl<I, K: Eq + Hash, T: SingleNode> Vnode for KeyedList<I>
+where
+    I: IntoIterator<Item = KeyedNode<K, T>> + Default,
+    I::IntoIter: DoubleEndedIterator + ExactSizeIterator,
+    I: AsRef<[KeyedNode<K, T>]>,
+{
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
-        let empty = Vec::new();
-        let (p, n) = (p.unwrap_or_default(), n.unwrap_or(&empty));
+        let empty = [];
+        // let (p, n) = (p.unwrap_or_default(), n.unwrap_or(&empty));
+        let (p, n) = (
+            p.unwrap_or_default(),
+            n.map(|KeyedList(n)| n.as_ref()).unwrap_or(&empty),
+        );
         struct Cb<'a, K, T> {
             key_type: PhantomData<K>,
             value_type: PhantomData<T>,
@@ -797,7 +828,7 @@ impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
             left_j: 0,
         };
         diff_by_key(
-            p.into_iter(),
+            p.0.into_iter(),
             |x| &x.key,
             n.iter().enumerate(),
             |x| &x.1.key,
@@ -812,15 +843,24 @@ impl<K: Eq + Hash, T: SingleNode> Vnode for Vec<KeyedNode<K, T>> {
     }
 }
 
+impl<T: fmt::Display, I> fmt::Display for KeyedList<I>
+where
+    for<'a> &'a I: IntoIterator<Item = &'a T>,
+{
+    #[inline(always)]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for node in &self.0 {
+            node.fmt(f)?;
+        }
+        Ok(())
+    }
+}
+
 pub mod hook;
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        html,
-        tags::{br, div},
-        Element,
-    };
+    use super::{html, tags::div, Element, KeyedNode};
 
     #[test]
     fn macro_self_closing_tag() {
@@ -845,8 +885,20 @@ mod tests {
     }
 
     #[test]
-    fn format_elements() {
+    fn format_html() {
         assert_eq!(format!("{}", Element { name: div }), "<div></div>");
-        assert_eq!(format!("{}", Element { name: br }), "<br>");
+        assert_eq!(
+            format!("{}", html! {<input type="text", />}),
+            "<input type=\"text\">"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                html! {{
+                    (0..2).into_iter().map(|i| KeyedNode::of(i, html!(<div>{i.to_string()}</div>))).collect::<Vec<_>>()
+                }}
+            ),
+            "<div>0</div><div>1</div>"
+        );
     }
 }
