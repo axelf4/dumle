@@ -161,3 +161,22 @@ impl<N, S, R> fmt::Debug for UseState<N, S, R> {
         write!(f, "UseState")
     }
 }
+
+impl<N: fmt::Display, S: Default, R> fmt::Display for UseState<N, S, R>
+where
+    R: FnMut(&S, Rc<dyn Fn(&Fn(&mut S))>) -> N + 'static,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let fake_live = Rc::new(RefCell::new(None));
+        if let UseStatePhase::Unmounted(mut render) = self.0.replace(UseStatePhase::Live(fake_live))
+        {
+            let state = Default::default();
+            let update = Rc::new(|_set_state: &Fn(&mut S)| {});
+            let result = render(&state, update).fmt(f);
+            self.0.set(UseStatePhase::Unmounted(render));
+            result
+        } else {
+            unimplemented!()
+        }
+    }
+}
