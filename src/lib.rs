@@ -174,7 +174,7 @@ impl<E: Element> SingleNode for E {
 impl<E: Element> SingleElement for E {}
 
 /// Collection of HTML tags.
-#[allow(non_camel_case_types, missing_docs)]
+#[allow(non_camel_case_types)]
 pub mod tags {
     use super::Element;
 
