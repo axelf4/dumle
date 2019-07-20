@@ -40,12 +40,15 @@
 
 #![deny(missing_docs, missing_debug_implementations)]
 
+use html_escape::html_escape;
 use lis::{diff_by_key, DiffCallback};
 use std::cell::Cell;
 use std::marker::PhantomData;
 use std::{fmt, hash::Hash};
 use wasm_bindgen::{prelude::*, JsCast, UnwrapThrowExt};
 use web_sys::{Document, Event, EventTarget, Node};
+
+pub mod html_escape;
 
 /// Pointer to some DOM node.
 #[derive(Clone, Debug)]
@@ -286,10 +289,10 @@ impl<T: AsRef<str> + PartialEq> SingleNode for Text<T> {
     }
 }
 
-impl<T: fmt::Display> fmt::Display for Text<T> {
+impl<T: AsRef<str>> fmt::Display for Text<T> {
     #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0) // TODO Escape text
+        html_escape(self.0.as_ref()).fmt(f)
     }
 }
 
