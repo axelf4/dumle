@@ -59,7 +59,7 @@ where
     }
 }
 
-fn patch_new_state<N: SingleNode + 'static, S: 'static, R>(
+fn patch_new_state<N: Vnode + SingleNode + 'static, S: 'static, R>(
     new_state: &Fn(&mut S),
     state: &Weak<RefCell<Option<UseStateData<N, S, R>>>>,
 ) where
@@ -92,7 +92,7 @@ fn patch_new_state<N: SingleNode + 'static, S: 'static, R>(
     state.node = ctx.cursor.child.expect_throw("Should point at node");
 }
 
-impl<N: SingleNode + 'static, S: Default + 'static, R> Vnode for UseState<N, S, R>
+impl<N: Vnode + SingleNode + 'static, S: Default + 'static, R> Vnode for UseState<N, S, R>
 where
     R: FnMut(&S, Rc<dyn Fn(&Fn(&mut S))>) -> N + 'static,
 {

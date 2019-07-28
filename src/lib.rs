@@ -91,7 +91,7 @@ fn document() -> Document {
 }
 
 /// Virtual DOM node.
-pub trait Vnode {
+pub trait Vnode: fmt::Display {
     /// Patches the DOM to match the new virtual node given the previous.
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>)
     where
@@ -113,7 +113,7 @@ pub trait SingleNode {
     }
 }
 
-impl<T: SingleNode> Vnode for T {
+impl<T: SingleNode + fmt::Display> Vnode for T {
     #[inline(always)]
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
         match (p, n) {
@@ -203,7 +203,7 @@ impl<T: AsRef<str>> SingleNode for Element<T> {
 
 impl<T: AsRef<str>> SingleElement for Element<T>
 where
-    Element<T>: SingleNode,
+    Self: SingleNode,
 {
     #[inline(always)]
     fn fmt_tag_name_attrs(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -221,7 +221,7 @@ where
 
 impl<T> fmt::Display for Element<T>
 where
-    Element<T>: SingleElement,
+    Self: SingleElement,
 {
     #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -364,7 +364,7 @@ impl<P: SingleNode, C: Vnode> SingleNode for Child<P, C> {
 
 impl<P: SingleElement, C: fmt::Display> SingleElement for Child<P, C>
 where
-    Child<P, C>: SingleNode,
+    Self: SingleNode,
 {
     #[inline(always)]
     fn fmt_tag_name_attrs(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -379,7 +379,7 @@ where
 
 impl<P, C> fmt::Display for Child<P, C>
 where
-    Child<P, C>: SingleElement,
+    Self: SingleElement,
 {
     #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -480,7 +480,7 @@ impl<N: SingleElement, V: AsRef<str> + PartialEq> SingleNode for Attribute<N, V>
 
 impl<N: SingleElement, V: AsRef<str>> SingleElement for Attribute<N, V>
 where
-    Attribute<N, V>: SingleNode,
+    Self: SingleNode,
 {
     #[inline(always)]
     fn fmt_tag_name_attrs(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -500,7 +500,7 @@ where
 
 impl<N, V> fmt::Display for Attribute<N, V>
 where
-    Attribute<N, V>: SingleElement,
+    Self: SingleElement,
 {
     #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -546,7 +546,7 @@ impl<N: SingleNode, F: FnMut(Event) + 'static> SingleNode for Listener<N, F> {
 
 impl<N: SingleElement, F> SingleElement for Listener<N, F>
 where
-    Listener<N, F>: SingleNode,
+    Self: SingleNode,
 {
     #[inline(always)]
     fn fmt_tag_name_attrs(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -560,7 +560,7 @@ where
 
 impl<N, F> fmt::Display for Listener<N, F>
 where
-    Listener<N, F>: SingleElement,
+    Self: SingleElement,
 {
     #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -570,7 +570,7 @@ where
     }
 }
 
-impl<N: SingleNode, F: FnMut(Event) + 'static> Listener<N, F> {
+impl<N, F> Listener<N, F> {
     /// Returns a new unattached [Listener].
     #[inline(always)]
     pub fn new(node: N, event: &'static str, callback: F) -> Self {
@@ -594,7 +594,7 @@ impl<N: fmt::Debug, F> fmt::Debug for Listener<N, F> {
 }
 
 /// Trait for types that can be converted to [Attribute]/[Listener]:s.
-pub trait ToAttribute<N: Vnode> {
+pub trait ToAttribute<N> {
     /// The output type of the conversion.
     type Output: Vnode;
     /// Converts this type given the name of the attribute/event-type.
@@ -613,7 +613,10 @@ impl<N: SingleElement> ToAttribute<N> for (&'static str, N) {
     }
 }
 
-impl<N: SingleNode, F: FnMut(Event) + 'static> ToAttribute<N> for (F, N) {
+impl<N, F> ToAttribute<N> for (F, N)
+where
+    Listener<N, F>: Vnode,
+{
     type Output = Listener<N, F>;
     #[inline(always)]
     fn to_attribute(self, event: &'static str) -> Self::Output {
@@ -764,6 +767,7 @@ where
     I: IntoIterator<Item = KeyedNode<K, T>> + Default,
     I::IntoIter: DoubleEndedIterator + ExactSizeIterator,
     I: AsRef<[KeyedNode<K, T>]>,
+    Self: fmt::Display,
 {
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
         let empty = [];
