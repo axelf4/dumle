@@ -44,7 +44,10 @@ use html_escape::html_escape;
 use lis::{diff_by_key, DiffCallback};
 use std::cell::Cell;
 use std::marker::PhantomData;
-use std::{fmt, hash::Hash};
+use std::{
+    fmt::{self, Write},
+    hash::Hash,
+};
 use wasm_bindgen::{prelude::*, JsCast, UnwrapThrowExt};
 use web_sys::{Document, Event, EventTarget, Node};
 
@@ -226,7 +229,7 @@ where
     #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt_tag_name_attrs(f)?;
-        write!(f, ">")?;
+        f.write_char('>')?;
         self.fmt_contents_end_tag(f)
     }
 }
@@ -372,7 +375,7 @@ where
     }
     #[inline(always)]
     fn fmt_contents_end_tag(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.1)?;
+        self.1.fmt(f)?;
         self.0.fmt_contents_end_tag(f)
     }
 }
@@ -384,7 +387,7 @@ where
     #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt_tag_name_attrs(f)?;
-        write!(f, ">")?;
+        f.write_char('>')?;
         self.fmt_contents_end_tag(f)
     }
 }
@@ -505,7 +508,7 @@ where
     #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt_tag_name_attrs(f)?;
-        write!(f, ">")?;
+        f.write_char('>')?;
         self.fmt_contents_end_tag(f)
     }
 }
@@ -565,7 +568,7 @@ where
     #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt_tag_name_attrs(f)?;
-        write!(f, ">")?;
+        f.write_char('>')?;
         self.fmt_contents_end_tag(f)
     }
 }
@@ -585,11 +588,10 @@ impl<N, F> Listener<N, F> {
 
 impl<N: fmt::Debug, F> fmt::Debug for Listener<N, F> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Listener {{ event: {}, node: {:?} }}",
-            self.event, self.node
-        )
+        f.debug_struct("Listener")
+            .field("event", &self.event)
+            .field("node", &self.node)
+            .finish()
     }
 }
 
@@ -743,11 +745,10 @@ impl<K, T> KeyedNode<K, T> {
 
 impl<K: fmt::Debug, T: fmt::Debug> fmt::Debug for KeyedNode<K, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "KeyedNode {{ key: {:?}, value: {:?} }}",
-            self.key, self.value
-        )
+        f.debug_struct("KeyedNode")
+            .field("key", &self.key)
+            .field("value", &self.value)
+            .finish()
     }
 }
 
