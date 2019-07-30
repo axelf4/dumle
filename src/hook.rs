@@ -51,7 +51,7 @@ pub struct UseState<N, S, R>(Cell<UseStatePhase<N, S, R>>);
 
 impl<N: SingleNode, S, R> UseState<N, S, R>
 where
-    R: FnMut(&S, Rc<dyn Fn(&Fn(&mut S))>) -> N + 'static,
+    R: FnMut(&S, Box<dyn Fn(&Fn(&mut S))>) -> N + 'static,
 {
     /// Returns a new unmounted [UseState] with the specified render function.
     pub fn new(render: R) -> Self {
@@ -63,14 +63,14 @@ fn patch_new_state<N: Vnode + SingleNode + 'static, S: 'static, R>(
     new_state: &Fn(&mut S),
     state: &Weak<RefCell<Option<UseStateData<N, S, R>>>>,
 ) where
-    R: FnMut(&S, Rc<dyn Fn(&Fn(&mut S))>) -> N + 'static,
+    R: FnMut(&S, Box<dyn Fn(&Fn(&mut S))>) -> N + 'static,
 {
     let state = state.upgrade().expect_throw("State should exist");
 
     let update = {
         let state = Rc::downgrade(&state);
         // Parameter type required because of https://github.com/rust-lang/rust/issues/41078
-        Rc::new(move |new_state: &Fn(&mut S)| patch_new_state(new_state, &state))
+        Box::new(move |new_state: &Fn(&mut S)| patch_new_state(new_state, &state))
     };
 
     let mut state = state.borrow_mut();
@@ -94,7 +94,7 @@ fn patch_new_state<N: Vnode + SingleNode + 'static, S: 'static, R>(
 
 impl<N: Vnode + SingleNode + 'static, S: Default + 'static, R> Vnode for UseState<N, S, R>
 where
-    R: FnMut(&S, Rc<dyn Fn(&Fn(&mut S))>) -> N + 'static,
+    R: FnMut(&S, Box<dyn Fn(&Fn(&mut S))>) -> N + 'static,
 {
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
         match (p, n) {
@@ -103,7 +103,7 @@ where
                 let user = Default::default();
                 let update = {
                     let state = Rc::downgrade(&state);
-                    Rc::new(move |new_state: &Fn(&mut S)| patch_new_state(new_state, &state))
+                    Box::new(move |new_state: &Fn(&mut S)| patch_new_state(new_state, &state))
                 };
 
                 if let UseStatePhase::Unmounted(mut render) =
@@ -164,14 +164,14 @@ impl<N, S, R> fmt::Debug for UseState<N, S, R> {
 
 impl<N: fmt::Display, S: Default, R> fmt::Display for UseState<N, S, R>
 where
-    R: FnMut(&S, Rc<dyn Fn(&Fn(&mut S))>) -> N + 'static,
+    R: FnMut(&S, Box<dyn Fn(&Fn(&mut S))>) -> N + 'static,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let fake_live = Rc::new(RefCell::new(None));
         if let UseStatePhase::Unmounted(mut render) = self.0.replace(UseStatePhase::Live(fake_live))
         {
             let state = Default::default();
-            let update = Rc::new(|_set_state: &Fn(&mut S)| {});
+            let update = Box::new(|_set_state: &Fn(&mut S)| {});
             let result = render(&state, update).fmt(f);
             self.0.set(UseStatePhase::Unmounted(render));
             result
