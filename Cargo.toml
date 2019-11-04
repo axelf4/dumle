@@ -11,7 +11,7 @@ keywords = ["virtual-dom", "vdom"]
 categories = ["wasm", "web-programming"]
 
 [dependencies]
-lis = { git = "https://github.com/axelf4/lis" }
+lis = "1.0.0"
 wasm-bindgen = "0.2.42"
 
 [dependencies.web-sys]

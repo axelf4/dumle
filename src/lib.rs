@@ -42,6 +42,7 @@
 
 use html_escape::html_escape;
 use lis::{diff_by_key, DiffCallback};
+use std::borrow::Borrow;
 use std::cell::Cell;
 use std::marker::PhantomData;
 use std::{
@@ -51,6 +52,7 @@ use std::{
 use wasm_bindgen::{prelude::*, JsCast, UnwrapThrowExt};
 use web_sys::{Document, Event, EventTarget, Node};
 
+pub mod hook;
 pub mod html_escape;
 
 /// Pointer to some DOM node.
@@ -93,6 +95,18 @@ fn document() -> Document {
     web_sys::window().unwrap_throw().document().unwrap_throw()
 }
 
+/*
+use std::pin::Pin;
+use std::marker::PhantomPinned;
+use std::ptr::NonNull;
+
+enum Vdom {
+    /// Cursor pointing at where this virtual DOM is mounted.
+    cursor: Cursor,
+
+}
+*/
+
 /// Virtual DOM node.
 pub trait Vnode: fmt::Display {
     /// Patches the DOM to match the new virtual node given the previous.
@@ -108,7 +122,7 @@ pub trait SingleNode {
 
     /// Updates this virtual node given the DOM node where it is mounted.
     ///
-    /// The DOM node must change positions however it may be replaced.
+    /// The DOM node must not change positions however it may be replaced.
     fn update(&self, _old: Self, _node: &mut Node)
     where
         Self: Sized,
@@ -174,7 +188,7 @@ pub trait SingleElement: SingleNode {
 }
 
 /// Virtual DOM element with a given name.
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Element<T> {
     /// The name of the DOM element.
     pub name: T,
@@ -248,7 +262,7 @@ pub mod tags {
                     concat!("The HTML ", stringify!($name),
                     " tag. [MDN Documentation](https://developer.mozilla.org/en-US/docs/Web/HTML/Element/",
                     stringify!($name), ")"),
-                    #[derive(PartialEq, Eq, Debug)]
+                    #[derive(Clone, PartialEq, Eq, Debug)]
                     pub struct $name;
                     impl AsRef<str> for $name {
                         #[inline(always)]
@@ -275,7 +289,7 @@ pub mod tags {
 }
 
 /// Virtual DOM text node with some data.
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Text<T>(pub T);
 
 impl<T: AsRef<str> + PartialEq> SingleNode for Text<T> {
@@ -642,7 +656,7 @@ impl<T: Vnode> ToVnode for T {
     }
 }
 
-impl ToVnode for &'static str {
+impl<'a> ToVnode for &'a str {
     type Output = Text<Self>;
     #[inline(always)]
     fn to_vnode(self) -> Self::Output {
@@ -723,13 +737,14 @@ impl<A: fmt::Display, B: fmt::Display> fmt::Display for Either<A, B> {
 }
 
 /// Virtual node with an associated key.
+#[derive(Clone, Debug)]
 pub struct KeyedNode<K, T> {
     /// The key.
     key: K,
     /// The virtual node.
     value: T,
-    /// The DOM node if mounted, otherwise `None`.
-    node: Cell<Option<Node>>,
+    // /// The DOM node if mounted, otherwise `None`.
+    // node: Cell<Option<Node>>,
 }
 
 impl<K, T> KeyedNode<K, T> {
@@ -738,11 +753,12 @@ impl<K, T> KeyedNode<K, T> {
         KeyedNode {
             key,
             value,
-            node: Cell::new(None),
+            // node: Cell::new(None),
         }
     }
 }
 
+/*
 impl<K: fmt::Debug, T: fmt::Debug> fmt::Debug for KeyedNode<K, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("KeyedNode")
@@ -751,6 +767,7 @@ impl<K: fmt::Debug, T: fmt::Debug> fmt::Debug for KeyedNode<K, T> {
             .finish()
     }
 }
+*/
 
 impl<K, T: fmt::Display> fmt::Display for KeyedNode<K, T> {
     #[inline(always)]
@@ -760,93 +777,147 @@ impl<K, T: fmt::Display> fmt::Display for KeyedNode<K, T> {
 }
 
 /// Keyed list of virtual nodes.
-#[derive(PartialEq, Eq, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct KeyedList<I>(pub I);
+
+struct ListDiffCb<'a, K, T> {
+    key_type: PhantomData<K>,
+    value_type: PhantomData<T>,
+    cursor: &'a mut Cursor,
+    /// The rightmost node last touched.
+    right: Option<Node>,
+    /// The index of the leftmost unchanged new node last touched.
+    left_j: usize,
+    rev_old_children: Vec<Option<Node>>,
+}
+impl<K: Eq + Hash, T: SingleNode, N: Borrow<KeyedNode<K, T>>>
+    DiffCallback<(usize, KeyedNode<K, T>), (usize, N)> for ListDiffCb<'_, K, T>
+{
+    fn inserted(&mut self, (j, new): (usize, N)) {
+        // Always simply insert new node at the cursor position
+        let node = new.borrow().value.create_node();
+        self.right = Some(
+            self.cursor
+                .parent
+                .insert_before(&node, self.right.as_ref())
+                .expect_throw("Failed to insert node"),
+        );
+        if j == 0 {
+            self.cursor.child = self.right.clone();
+        }
+    }
+    fn removed(&mut self, (i, _old): (usize, KeyedNode<K, T>)) {
+        let num_children = self.rev_old_children.len();
+        let mut node = self.rev_old_children[num_children - i - 1]
+            .take()
+            .unwrap_throw();
+        self.cursor
+            .parent
+            .remove_child(&node)
+            .expect_throw("Failed to remove node");
+    }
+    fn unchanged(&mut self, (i, old): (usize, KeyedNode<K, T>), (j, new): (usize, N)) {
+        let num_children = self.rev_old_children.len();
+        let mut node = self.rev_old_children[num_children - i - 1]
+            .take()
+            .unwrap_throw();
+        new.borrow().value.update(old.value, &mut node);
+        if self.left_j == j {
+            self.left_j += 1;
+            if j == 0 {
+                self.cursor.child = Some(node);
+            }
+        } else {
+            self.right = Some(node);
+        }
+    }
+    fn moved(&mut self, (i, old): (usize, KeyedNode<K, T>), (j, new): (usize, N)) {
+        let num_children = self.rev_old_children.len();
+        let mut node = self.rev_old_children[num_children - i - 1]
+            .take()
+            .unwrap_throw();
+        new.borrow().value.update(old.value, &mut node);
+        self.right = Some(
+            self.cursor
+                .parent
+                .insert_before(&node, self.right.as_ref())
+                .expect_throw("Failed to move node"),
+        );
+        if j == 0 {
+            self.cursor.child = self.right.clone();
+        }
+    }
+}
+
+/*
+impl<'a, I: 'a, K: Eq + Hash + 'a, T: SingleNode + 'a> Vnode for KeyedList<I>
+where
+    I: IntoIterator<Item = KeyedNode<K, T>>,
+    I::IntoIter: DoubleEndedIterator + ExactSizeIterator,
+    &'a I:
+        IntoIterator<Item = &'a KeyedNode<K, T>, IntoIter = std::slice::Iter<'a, KeyedNode<K, T>>>,
+    // for<'a> <&'a I as IntoIterator>::IntoIter: DoubleEndedIterator + ExactSizeIterator,
+    Self: fmt::Display,
+    */
 
 impl<I, K: Eq + Hash, T: SingleNode> Vnode for KeyedList<I>
 where
-    I: IntoIterator<Item = KeyedNode<K, T>> + Default,
+    I: IntoIterator<Item = KeyedNode<K, T>>,
     I::IntoIter: DoubleEndedIterator + ExactSizeIterator,
-    I: AsRef<[KeyedNode<K, T>]>,
+    for<'a> &'a I:
+        IntoIterator<Item = &'a KeyedNode<K, T>, IntoIter = std::slice::Iter<'a, KeyedNode<K, T>>>,
+    // for<'a> <&'a I as IntoIterator>::IntoIter: DoubleEndedIterator + ExactSizeIterator,
     Self: fmt::Display,
 {
     fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
-        let empty = [];
-        // let (p, n) = (p.unwrap_or_default(), n.unwrap_or(&empty));
-        let (p, n) = (
-            p.unwrap_or_default(),
-            n.map(|KeyedList(n)| n.as_ref()).unwrap_or(&empty),
-        );
-        struct Cb<'a, K, T> {
-            key_type: PhantomData<K>,
-            value_type: PhantomData<T>,
-            parent: &'a Node,
-            /// The rightmost node last touched.
-            right: Option<Node>,
-            /// The index of the leftmost unchanged new node last touched.
-            left_j: usize,
+        let right = ctx.cursor.child.clone();
+        let num_old_children = p
+            .as_ref()
+            .map(|KeyedList(ref p)| p.into_iter().len())
+            .unwrap_or(0);
+
+        let rev_old_children = {
+            let first = ctx
+                .cursor
+                .child
+                .as_ref()
+                .map(|x| x.previous_sibling().expect_throw("Bad cursor"))
+                .or_else(|| ctx.cursor.parent.last_child());
+            std::iter::successors(first, Node::previous_sibling)
+                .map(|x| Some(x))
+                .take(num_old_children)
+                .collect()
         };
-        impl<K: Eq + Hash, T: SingleNode> DiffCallback<KeyedNode<K, T>, (usize, &KeyedNode<K, T>)>
-            for Cb<'_, K, T>
-        {
-            fn inserted(&mut self, (_j, new): (usize, &KeyedNode<K, T>)) {
-                let node = new.value.create_node();
-                self.right = Some(
-                    self.parent
-                        .insert_before(&node, self.right.as_ref())
-                        .expect_throw("Failed to insert node"),
-                );
-                new.node.set(Some(node));
-            }
-            fn removed(&mut self, old: KeyedNode<K, T>) {
-                if let Some(node) = old.node.replace(None) {
-                    self.parent
-                        .remove_child(&node)
-                        .expect_throw("Failed to remove node");
-                } else {
-                    unreachable!()
-                }
-            }
-            fn unchanged(&mut self, old: KeyedNode<K, T>, (j, new): (usize, &KeyedNode<K, T>)) {
-                let mut node = old.node.replace(None).expect_throw("Should have node");
-                new.value.update(old.value, &mut node);
-                if self.left_j == j {
-                    self.left_j += 1;
-                } else {
-                    self.right = Some(node.clone());
-                }
-                new.node.set(Some(node));
-            }
-            fn moved(&mut self, old: KeyedNode<K, T>, (_j, new): (usize, &KeyedNode<K, T>)) {
-                let mut node = old.node.replace(None).expect_throw("Should have node");
-                self.right = Some(
-                    self.parent
-                        .insert_before(&node, self.right.as_ref())
-                        .expect_throw("Failed to move node"),
-                );
-                new.value.update(old.value, &mut node);
-                new.node.set(Some(node));
-            }
-        }
-        let mut cb = Cb {
+        let mut cb = ListDiffCb {
             key_type: PhantomData,
             value_type: PhantomData,
-            parent: &ctx.cursor.parent,
-            right: ctx.cursor.child.clone(),
+            cursor: &mut ctx.cursor,
+            right,
             left_j: 0,
+            rev_old_children,
         };
-        diff_by_key(
-            p.0.into_iter(),
-            |x| &x.key,
-            n.iter().enumerate(),
-            |x| &x.1.key,
-            &mut cb,
-        );
-        // Hackish way to set cursor to first new node
-        if let Some(first) = n.first() {
-            let node = first.node.replace(None).unwrap_throw();
-            ctx.cursor.child = Some(node.clone());
-            first.node.set(Some(node));
+        if let Some(KeyedList(ref n)) = n {
+            if let Some(KeyedList(p)) = p {
+                diff_by_key(
+                    p.into_iter().enumerate(),
+                    |x| &x.1.key,
+                    n.into_iter().enumerate(),
+                    |x| &x.1.key,
+                    &mut cb,
+                );
+            } else {
+                n.into_iter().enumerate().rev().for_each(|x| cb.inserted(x)); // Add all new nodes
+            }
+        } else {
+            if let Some(KeyedList(p)) = p {
+                p.into_iter().enumerate().for_each(|x| {
+                    <ListDiffCb<_, _> as DiffCallback<_, (_, &KeyedNode<_, _>)>>::removed(
+                        &mut cb, x,
+                    )
+                }); // Remove all old nodes
+            } else {
+                unreachable!()
+            }
         }
     }
 }
@@ -864,7 +935,69 @@ where
     }
 }
 
-pub mod hook;
+/*
+/// Cloning keyed list of virtual nodes.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct CloneKeyedList<I>(pub I);
+
+impl<I, K: Eq + Hash, T: SingleNode> Vnode for CloneKeyedList<I>
+where
+    I: IntoIterator<Item = KeyedNode<K, T>> + Clone,
+    I::IntoIter: DoubleEndedIterator + ExactSizeIterator,
+    Self: fmt::Display,
+{
+    fn patch(ctx: &mut Context, p: Option<Self>, n: Option<&Self>) {
+        let right = ctx.cursor.child.clone();
+        let num_old_children = p
+            .as_ref()
+            .map(|CloneKeyedList(ref p)| p.clone().into_iter().len())
+            .unwrap_or(0);
+        let mut cb = ListDiffCb {
+            key_type: PhantomData,
+            value_type: PhantomData,
+            cursor: &mut ctx.cursor,
+            right,
+            left_j: 0,
+            offsets: vec![0; num_old_children],
+            right_index: num_old_children,
+        };
+        if let Some(CloneKeyedList(ref n)) = n {
+            if let Some(CloneKeyedList(p)) = p {
+                diff_by_key(
+                    p.into_iter().enumerate(),
+                    |x| &x.1.key,
+                    n.clone().into_iter().enumerate(),
+                    |x| &x.1.key,
+                    &mut cb,
+                );
+            } else {
+                n.clone()
+                    .into_iter()
+                    .enumerate()
+                    .rev()
+                    .for_each(|(j, new)| cb.inserted((j, &new))); // Add all new nodes
+            }
+        } else {
+            if let Some(CloneKeyedList(p)) = p {
+                p.into_iter().enumerate().for_each(|x| {
+                    <ListDiffCb<_, _> as DiffCallback<_, (_, KeyedNode<_, _>)>>::removed(&mut cb, x)
+                }); // Remove all old nodes
+            } else {
+                unreachable!()
+            }
+        }
+    }
+}
+
+impl<T: fmt::Display, K, I: IntoIterator<Item = KeyedNode<K, T>> + Clone> fmt::Display
+    for CloneKeyedList<I>
+{
+    #[inline(always)]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.clone().into_iter().try_for_each(|x| x.value.fmt(f))
+    }
+}
+*/
 
 #[cfg(test)]
 mod tests {
