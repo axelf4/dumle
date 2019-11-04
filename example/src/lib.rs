@@ -2,7 +2,7 @@
 
 // trace_macros!(true);
 
-use dumle::{hook::UseState, html, Context, Either, Empty, KeyedNode, Vnode};
+use dumle::{hook::UseState, html, CachedKeyedNode, Context, Either, Empty, Vnode};
 use std::default::Default;
 use wasm_bindgen::{prelude::*, throw_str, UnwrapThrowExt};
 
@@ -47,6 +47,7 @@ fn render(switch: bool) -> impl Vnode {
                         Either::B(Empty)
                     }
                 }
+                <div>
                 {
                     let iter = (0..state.number).into_iter();
                     let mut vec = if state.number % 2 == 0 {
@@ -59,8 +60,9 @@ fn render(switch: bool) -> impl Vnode {
                         vec.retain(|&x| x % 2 == 0);
                     }
 
-                    vec.into_iter().map(|i| KeyedNode::of(i, html!{<div>{i.to_string()}</div>})).collect::<Vec<_>>()
+                    vec.into_iter().map(|i| CachedKeyedNode::of(i, html!{<div>{i.to_string()}</div>})).collect::<Vec<_>>()
                 }
+                </div>
                 </div>
             }
         })
