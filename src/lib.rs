@@ -95,18 +95,6 @@ fn document() -> Document {
     web_sys::window().unwrap_throw().document().unwrap_throw()
 }
 
-/*
-use std::pin::Pin;
-use std::marker::PhantomPinned;
-use std::ptr::NonNull;
-
-enum Vdom {
-    /// Cursor pointing at where this virtual DOM is mounted.
-    cursor: Cursor,
-
-}
-*/
-
 /// Virtual DOM node.
 pub trait Vnode: fmt::Display {
     /// Patches the DOM to match the new virtual node given the previous.
