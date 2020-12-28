@@ -18,6 +18,28 @@ pub fn html_escape<'a>(s: &'a str) -> HtmlEscape<'a> {
     HtmlEscape { chars: s.chars() }
 }
 
+/// HTML escaper.
+#[derive(Debug)]
+pub struct HtmlEscape2<W>(pub W);
+
+impl<W: fmt::Write> fmt::Write for HtmlEscape2<W> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        fn should_escape(b: u8) -> bool {
+            (b | 0x4) == b'&' || (b | 0x2) == b'>'
+        }
+
+        s.chars()
+            .try_for_each(|c| match (c.is_ascii() && should_escape(c as u8), c) {
+                (true, '&') => self.0.write_str("&amp"),
+                (true, '<') => self.0.write_str("&lt"),
+                (true, '>') => self.0.write_str("&gt"),
+                (true, '"') => self.0.write_str("&quot"),
+                (true, '\'') => self.0.write_str("&apos"),
+                _ => self.0.write_char(c),
+            })
+    }
+}
+
 /// The return type of [`html_escape`].
 #[derive(Clone, Debug)]
 pub struct HtmlEscape<'a> {
